@@ -24,10 +24,9 @@ export const TEMPLATE_NAMESPACE = 'default';
 
 // This extension's product + route names (kept here so registerNav and routing/index.ts agree).
 export const PRODUCT_NAME = 'ai-templating';
-export const ROUTE_SOURCES = 'ai-templating-sources';
+export const ROUTE_SETTINGS = 'ai-templating-settings';
 export const ROUTE_VIEW = 'ai-templating-view';
 
-const SOURCES_TYPE = 'custom-view-sources';
 const DEFAULT_GROUP = 'customViews';
 const DEFAULT_GROUP_WEIGHT = 50;
 
@@ -177,26 +176,9 @@ function navGroup(group) {
   return `${ group }`.toLowerCase() === ROOT ? ROOT : group;
 }
 
-function addSourcesEntry({ virtualType, labelGroup, weightGroup }, pushName) {
-  labelGroup(DEFAULT_GROUP, 'Custom Views');
-  weightGroup(DEFAULT_GROUP, DEFAULT_GROUP_WEIGHT, true);
-
-  if (pushName) {
-    pushName(DEFAULT_GROUP, SOURCES_TYPE);
-  }
-
-  virtualType({
-    label:      'Custom View Sources',
-    group:      DEFAULT_GROUP,
-    namespaced: false,
-    name:       SOURCES_TYPE,
-    icon:       'file',
-    weight:     -100,
-    route:      { name: ROUTE_SOURCES },
-    exact:      true,
-  });
-}
-
+// Register a nav entry per RENDERED custom-view page (the actual runtime-compiled views). The
+// CR-type LISTS (Custom Views / Home Templates management) are registered separately as proper
+// resource lists in product.ts — this only handles the dynamic per-view pages.
 function registerNav(store) {
   const {
     virtualType, basicType, weightGroup, labelGroup
@@ -214,9 +196,7 @@ function registerNav(store) {
     const groupWeight = typeof nav.weight === 'number' ? nav.weight : DEFAULT_GROUP_WEIGHT;
 
     if (group !== ROOT) {
-      if (nav.groupLabel) {
-        labelGroup(group, nav.groupLabel);
-      }
+      labelGroup(group, nav.groupLabel || 'Custom Views');
       weightGroup(group, groupWeight, true);
     }
 
@@ -242,11 +222,6 @@ function registerNav(store) {
     });
   });
 
-  // The Custom View Sources control entry is ALWAYS present.
-  addSourcesEntry({
-    virtualType, labelGroup, weightGroup
-  }, pushName);
-
   Object.entries(namesByGroup).forEach(([group, names]) => basicType(names, group));
 
   const currentNames = Object.values(namesByGroup).flat();
@@ -260,23 +235,13 @@ function registerNav(store) {
   registeredNames = currentNames;
 }
 
-/** Disabled-state nav: only the Sources control entry, so the feature can be turned back on. */
-function registerSourcesOnly(store) {
-  const {
-    virtualType, labelGroup, weightGroup, basicType
-  } = DSL({ commit: store.commit }, PRODUCT_NAME);
-
-  addSourcesEntry({
-    virtualType, labelGroup, weightGroup
-  });
-  basicType([SOURCES_TYPE], DEFAULT_GROUP);
-
-  const staleNames = registeredNames.filter((name) => name !== SOURCES_TYPE);
-
-  if (staleNames.length) {
-    store.commit('type-map/removeTypes', { product: PRODUCT_NAME, names: staleNames });
+/** Remove all dynamic rendered-view nav entries (disabled state). The static product nav
+ * (Settings + CR-type lists) stays, so the feature can be managed / turned back on. */
+function clearEngineNav(store) {
+  if (registeredNames.length) {
+    store.commit('type-map/removeTypes', { product: PRODUCT_NAME, names: registeredNames });
+    registeredNames = [];
   }
-  registeredNames = [SOURCES_TYPE];
 }
 
 /**
@@ -293,7 +258,7 @@ export async function loadCustomViews(store) {
     } catch (e) { /* absent/forbidden -> treated as enabled */ }
 
     if (!isTemplatingEnabled(store.getters)) {
-      registerSourcesOnly(store);
+      clearEngineNav(store);
 
       return;
     }
@@ -316,7 +281,7 @@ export function reloadCustomViews(store) {
     loadedTemplates = [];
 
     if (!isTemplatingEnabled(store.getters)) {
-      registerSourcesOnly(store);
+      clearEngineNav(store);
 
       return;
     }

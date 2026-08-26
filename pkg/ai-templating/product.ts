@@ -1,28 +1,52 @@
 import { IPlugin } from '@shell/core/types';
-import { PRODUCT_NAME, ROUTE_SOURCES } from './templating/template-engine';
+import {
+  PRODUCT_NAME, ROUTE_SETTINGS, CUSTOM_VIEW, HOME_TEMPLATE, TEMPLATING_CONFIG
+} from './templating/template-engine';
 
-// The "AI Templating" product. Registers the product shell + the always-present Custom View
-// Sources control page. Dynamic per-CustomView pages are added at runtime by the engine's
-// registerNav (from the onEnter nav hook in index.ts).
+// The "AI Templating" product.
+//
+// Registers PROPER Rancher resource lists for the CR types (CustomView / HomeTemplate /
+// TemplatingConfig) — so they get the standard ResourceTable + create/edit-YAML + row actions for
+// free — plus a Settings page for the kill switch. The CRs are global (local cluster), so the
+// lists are `localOnly` (hidden on downstream clusters). The dynamic RENDERED custom-view pages
+// are added at runtime by the engine (index.ts onEnter nav hook).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function init($extension: IPlugin, store: any): void {
-  const { product, virtualType, basicType } = $extension.DSL(store, PRODUCT_NAME);
+  const {
+    product, configureType, virtualType, basicType, weightType
+  } = $extension.DSL(store, PRODUCT_NAME);
 
   product({
     icon:                'compass',
     removable:           false,
     showClusterSwitcher: true,
     weight:              -1,
-    to:                  { name: ROUTE_SOURCES },
+    to:                  { name: ROUTE_SETTINGS },
+    typeStoreMap:        {
+      [CUSTOM_VIEW]:       'management',
+      [HOME_TEMPLATE]:     'management',
+      [TEMPLATING_CONFIG]: 'management',
+    },
   });
 
+  // Standard resource lists — local-only (the CRs live in the local/Rancher cluster).
+  [HOME_TEMPLATE, CUSTOM_VIEW, TEMPLATING_CONFIG].forEach((type) => {
+    configureType(type, { isCreatable: true, localOnly: true });
+  });
+
+  weightType(HOME_TEMPLATE, 102, true);
+  weightType(CUSTOM_VIEW, 101, true);
+  weightType(TEMPLATING_CONFIG, 100, true);
+
+  // Settings (kill-switch toggle) — always reachable.
   virtualType({
-    labelKey:   'aiTemplating.sources.label',
-    name:       'custom-view-sources',
+    labelKey:   'aiTemplating.settings.label',
+    name:       'ai-templating-settings',
     namespaced: false,
-    icon:       'file',
-    route:      { name: ROUTE_SOURCES },
+    icon:       'gear',
+    weight:     103,
+    route:      { name: ROUTE_SETTINGS },
   });
 
-  basicType(['custom-view-sources']);
+  basicType(['ai-templating-settings', HOME_TEMPLATE, CUSTOM_VIEW, TEMPLATING_CONFIG]);
 }

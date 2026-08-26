@@ -1,16 +1,16 @@
 import { RouteRecordRaw } from 'vue-router';
-import { PRODUCT_NAME, ROUTE_SOURCES, ROUTE_VIEW } from '../templating/template-engine';
+import { PRODUCT_NAME, ROUTE_SETTINGS, ROUTE_VIEW } from '../templating/template-engine';
 
-import CustomViewSources from '../pages/CustomViewSources.vue';
+import Settings from '../pages/Settings.vue';
 import TemplateView from '../pages/TemplateView.vue';
 
-// Cluster-scoped routes for the AI Templating product. meta.product ties them to the product
-// nav so the side-nav + product switcher work.
+// Cluster-scoped routes for the AI Templating product. The CR-type lists use the core generic
+// resource routes (registered via basicType in product.ts); these are the custom pages.
 const routes: RouteRecordRaw[] = [
   {
-    name:      ROUTE_SOURCES,
+    name:      ROUTE_SETTINGS,
     path:      `/c/:cluster/${ PRODUCT_NAME }`,
-    component: CustomViewSources,
+    component: Settings,
     meta:      { product: PRODUCT_NAME },
   },
   {

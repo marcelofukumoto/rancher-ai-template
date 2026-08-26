@@ -2,5 +2,23 @@ product:
   ai-templating: AI Templating
 
 aiTemplating:
-  sources:
-    label: Custom View Sources
+  settings:
+    label: Settings
+
+# Nicer nav/list labels for the CR types (ICU pluralization, keyed by lowercased schema id).
+typeLabel:
+  templating.rancher.io.customview: |-
+    {count, plural,
+      one { Custom View }
+      other { Custom Views }
+    }
+  templating.rancher.io.hometemplate: |-
+    {count, plural,
+      one { Home Template }
+      other { Home Templates }
+    }
+  templating.rancher.io.templatingconfig: |-
+    {count, plural,
+      one { Templating Config }
+      other { Templating Config }
+    }
