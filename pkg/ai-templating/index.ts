@@ -29,6 +29,14 @@ function installHomeRoute(): boolean {
     }],
   });
 
+  // This runs at plugin-init, AFTER the initial route has resolved — so a hard load of /home
+  // still shows the stock home. If we're currently on /home, force a re-resolve so ours renders.
+  const cur = router.currentRoute?.value;
+
+  if (cur && cur.path === '/home') {
+    router.replace({ path: '/home', force: true }).catch(() => {});
+  }
+
   return true;
 }
 
