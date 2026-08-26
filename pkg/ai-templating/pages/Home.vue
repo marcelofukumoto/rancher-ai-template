@@ -1,40 +1,61 @@
 <script>
+import StockHome from '@shell/pages/home.vue';
 import TemplateCode from '../components/TemplateCode.vue';
+import {
+  HOME_TEMPLATE, TEMPLATING_CONFIG, CONFIG_ID,
+  isTemplatingEnabled, appliedHomeTemplateName, homeTemplateSource
+} from '../templating/template-engine';
 
-// Smoke-test source: a runtime-compiled SFC that also imports a real @components component,
-// so a successful render proves both the compiler AND the @shell/@components registry work
-// inside the extension build. (This becomes the CR-driven Home template next.)
-const DEMO_SOURCE =
-`<script>
-import { Banner } from '@components/Banner';
-export default { components: { Banner }, data() { return { n: 3 }; } };
-<\/script>
-<template>
-  <div>
-    <Banner color="success" label="Runtime-compiled SFC rendering inside the extension" />
-    <p>Math still works: {{ n }} + 4 = {{ n + 4 }}</p>
-  </div>
-<\/template>`;
-
+// The extension's Home page (plugin.setHomePage). Resolves the applied HomeTemplate CR and
+// renders its runtime-compiled SFC. Falls back to the STOCK Rancher Home when templating is
+// off or no template is applied — so the kill switch behaves like normal Rancher.
 export default {
   name:       'AiTemplatingHome',
-  components: { TemplateCode },
+  components: { StockHome, TemplateCode },
+
+  async fetch() {
+    try {
+      await this.$store.dispatch('management/find', { type: TEMPLATING_CONFIG, id: CONFIG_ID })
+        .catch(() => {});
+
+      if (this.$store.getters['management/schemaFor'](HOME_TEMPLATE)) {
+        await this.$store.dispatch('management/findAll', { type: HOME_TEMPLATE }).catch(() => {});
+      }
+
+      const user = await this.$store.dispatch('auth/getUser').catch(() => null);
+
+      this.userId = user?.id || this.$store.getters['auth/user']?.id || null;
+    } catch (e) { /* fall back to stock Home */ }
+  },
 
   data() {
-    return { source: DEMO_SOURCE };
+    return { userId: null };
+  },
+
+  computed: {
+    templatingEnabled() {
+      return isTemplatingEnabled(this.$store.getters);
+    },
+
+    appliedName() {
+      return appliedHomeTemplateName(this.$store.getters, this.userId);
+    },
+
+    source() {
+      if (!this.templatingEnabled) {
+        return '';
+      }
+
+      return homeTemplateSource(this.$store.getters, this.appliedName);
+    },
   },
 };
 </script>
 
 <template>
-  <div class="ai-templating-home">
-    <h1>AI Templating</h1>
-    <TemplateCode :source="source" />
-  </div>
+  <TemplateCode
+    v-if="source"
+    :source="source"
+  />
+  <StockHome v-else />
 </template>
-
-<style lang="scss" scoped>
-.ai-templating-home {
-  padding: 40px;
-}
-</style>

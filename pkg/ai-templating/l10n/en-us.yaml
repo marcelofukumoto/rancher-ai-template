@@ -1,0 +1,6 @@
+product:
+  ai-templating: AI Templating
+
+aiTemplating:
+  sources:
+    label: Custom View Sources
