@@ -11,13 +11,13 @@ const AGENT_NAMESPACE = 'cattle-ai-agent-system';
 const AGENT_NAME = 'rancher-ai-agent';
 const WS_PATH = 'v1/ws/messages';
 
-// Prepended to each message: a tiny per-request line naming the SAVED template ConfigMap to edit.
+// Prepended to each message: a tiny per-request line naming the HomeTemplate CR to edit.
 // The FULL contract (how to build the Home page — component library, imports, workflow, canonical
 // example) now lives in the home-editor-config agent's systemPrompt
 // (shell/config/templating/home-editor-config.aiagentconfig.yaml), the single source of truth.
 // __CM_NAME__ is replaced with the ConfigMap the editor is currently editing.
 const HOME_EDITOR_TARGET =
-`For this request, edit ONLY the SAVED template ConfigMap named "__CM_NAME__" in namespace "default" (its data["view.vue"]). Never edit "home-applied" or any other ConfigMap.
+`For this request, edit ONLY the HomeTemplate custom resource (apiVersion templating.rancher.io/v1alpha1, kind HomeTemplate) named "__CM_NAME__" in namespace "default". Put the full Vue SFC in its spec.source. Do not edit any other resource.
 
 `;
 
