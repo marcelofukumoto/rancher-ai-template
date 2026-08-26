@@ -1,0 +1,69 @@
+# Sample CRs for load-testing the AI Templating extension.
+#   kubectl apply -f sample-crs.yaml
+# HomeTemplate "welcome" is applied as the global Home via TemplatingConfig; CustomView
+# "pods-view" appears under the AI Templating product.
+---
+apiVersion: templating.rancher.io/v1alpha1
+kind: HomeTemplate
+metadata:
+  name: welcome
+  namespace: default
+spec:
+  displayName: Welcome
+  source: |
+    <script>
+    import { Banner } from '@components/Banner';
+    export default {
+      components: { Banner },
+      async fetch() {
+        this.clusters = await this.$store.dispatch('management/findAll', { type: 'management.cattle.io.cluster' }).catch(() => []);
+      },
+      data() { return { clusters: [] }; },
+    };
+    </script>
+    <template>
+      <div style="padding: 40px">
+        <Banner color="success" label="This Home page is rendered from a HomeTemplate CR by the AI Templating extension." />
+        <h2 style="margin-top: 20px">You have {{ clusters.length }} cluster(s)</h2>
+      </div>
+    </template>
+---
+apiVersion: templating.rancher.io/v1alpha1
+kind: TemplatingConfig
+metadata:
+  name: config
+  namespace: default
+spec:
+  enabled: true
+  home:
+    global: welcome
+---
+apiVersion: templating.rancher.io/v1alpha1
+kind: CustomView
+metadata:
+  name: pods-view
+  namespace: default
+spec:
+  kind: code
+  meta:
+    id: pods-view
+    name: Pods
+    icon: compass
+  source: |
+    <script>
+    import ResourceTable from '@shell/components/ResourceTable';
+    export default {
+      components: { ResourceTable },
+      async fetch() {
+        this.rows = await this.$store.dispatch('cluster/findAll', { type: 'pod' }).catch(() => []);
+      },
+      data() { return { rows: [] }; },
+      computed: { schema() { return this.$store.getters['cluster/schemaFor']('pod'); } },
+    };
+    </script>
+    <template>
+      <div>
+        <h1 class="mb-20">Pods (custom view)</h1>
+        <ResourceTable v-if="schema" :schema="schema" :rows="rows" />
+      </div>
+    </template>
