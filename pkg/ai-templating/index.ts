@@ -1,7 +1,7 @@
 import { importTypes } from '@rancher/auto-import';
 import { IPlugin } from '@shell/core/types';
 import HomeLayout from '@shell/components/templates/home.vue';
-import { loadCustomViews } from './templating/template-engine';
+import { loadCustomViews, toggleTemplating } from './templating/template-engine';
 import { ensureInstalled } from './install/ensure';
 import routing from './routing/index';
 import Home from './pages/Home.vue';
@@ -41,6 +41,37 @@ function installHomeRoute(): boolean {
   return true;
 }
 
+// Global shortcut: Cmd/Ctrl + Shift + . toggles the templating kill switch. Extensions can't add a
+// global mounted component, but plugin init runs in the browser, so a raw document keydown listener
+// works. Matched on event.code === 'Period' (layout-independent). Registered once.
+function installShortcut(): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if ((window as any).__aiTemplatingShortcut) {
+    return;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (window as any).__aiTemplatingShortcut = true;
+
+  window.addEventListener('keydown', (e) => {
+    if (!((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === 'Period')) {
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const store = (window as any).$globalApp?.$store;
+
+    if (store) {
+      e.preventDefault();
+      toggleTemplating(store).then((now) => {
+        store.dispatch('growl/success', {
+          title:   'AI templating',
+          message: now ? 'Templating enabled.' : 'Templating disabled — showing stock Rancher.',
+        }, { root: true });
+      }).catch(() => {});
+    }
+  });
+}
+
 // Init the package
 export default function(plugin: IPlugin): void {
   importTypes(plugin);
@@ -76,4 +107,6 @@ export default function(plugin: IPlugin): void {
   };
 
   tryEnsure();
+
+  installShortcut();
 }

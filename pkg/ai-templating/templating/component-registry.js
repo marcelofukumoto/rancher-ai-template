@@ -1,3 +1,4 @@
+/* eslint-disable */
 // Lazy registry of components for runtime-compiled custom-view SFCs.
 //
 // @shell/components: exposed via require.context (sync) — mapped by ctx.keys() (lists only)
@@ -24,6 +25,8 @@
 //   import Banner, { Banner } from '@components/Banner'      (@components dir, default+named)
 //   import { RcDropdown, RcDropdownItem } from '@components/RcDropdown'  (multiple named)
 
+import PkgTemplateOverview from '../components/TemplateOverview.vue';
+import PkgTemplateResourceList from '../components/TemplateResourceList.vue';
 import Accordion from '@components/Accordion/Accordion.vue';
 import BadgeState from '@components/BadgeState/BadgeState.vue';
 import Banner from '@components/Banner/Banner.vue';
@@ -1663,6 +1666,20 @@ SHELL_MODULES.forEach(([path, mod]) => {
   EXTRA[`${ path }.vue`] = ns;
   EXTRA[`${ path }.js`] = ns;
   EXTRA[`${ path }.ts`] = ns;
+});
+
+// Expose this extension's own widget components so custom views can import them. The original
+// templating-for-ai templates (e.g. Cluster Overview) import these by the @shell/pages path they
+// used to live at, so register those keys too.
+[
+  ['TemplateOverview', PkgTemplateOverview],
+  ['TemplateResourceList', PkgTemplateResourceList],
+].forEach(([name, comp]) => {
+  const ns = { __esModule: true, default: comp };
+
+  EXTRA[name] = ns;
+  EXTRA[`@shell/pages/c/_cluster/_template/${ name }`] = ns;
+  EXTRA[`@shell/pages/c/_cluster/_template/${ name }.vue`] = ns;
 });
 
 let keyMap = null;
