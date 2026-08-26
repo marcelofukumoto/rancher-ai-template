@@ -2,6 +2,7 @@ import { importTypes } from '@rancher/auto-import';
 import { IPlugin } from '@shell/core/types';
 import HomeLayout from '@shell/components/templates/home.vue';
 import { loadCustomViews } from './templating/template-engine';
+import { ensureInstalled } from './install/ensure';
 import routing from './routing/index';
 import Home from './pages/Home.vue';
 
@@ -60,4 +61,19 @@ export default function(plugin: IPlugin): void {
   };
 
   tryInstall();
+
+  // Auto-install the extension's cluster dependencies (CRDs + AIAgentConfig agents + a default
+  // template) once the management store is ready. Idempotent + admin-gated (see ensureInstalled).
+  const tryEnsure = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const app = (window as any).$globalApp;
+
+    if (app?.$store?.state?.managementReady) {
+      ensureInstalled(app.$store);
+    } else {
+      setTimeout(tryEnsure, 500);
+    }
+  };
+
+  tryEnsure();
 }
