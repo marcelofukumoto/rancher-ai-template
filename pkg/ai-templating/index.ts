@@ -95,12 +95,16 @@ export default function(plugin: IPlugin): void {
 
   // Auto-install the extension's cluster dependencies (CRDs + AIAgentConfig agents + a default
   // template) once the management store is ready. Idempotent + admin-gated (see ensureInstalled).
+  // Then load custom views once eagerly: cluster-scoped views register into the `explorer` product,
+  // so they show up in a cluster's navbar even if the user never opens the AI Templating product.
   const tryEnsure = () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const app = (window as any).$globalApp;
 
     if (app?.$store?.state?.managementReady) {
-      ensureInstalled(app.$store);
+      Promise.resolve(ensureInstalled(app.$store))
+        .catch(() => {})
+        .finally(() => loadCustomViews(app.$store));
     } else {
       setTimeout(tryEnsure, 500);
     }

@@ -483,13 +483,26 @@ spec:
     id: pods-view
     name: Pods
     icon: compass
+  # scope: cluster => registers in a cluster's navbar (the core `explorer` product) with cluster
+  # context, instead of under the global AI Templating product. Needed because it reads cluster/*.
+  # group + groupLabel place it under a collapsible nav section ("Custom Lists > Pods"); use
+  # group: root for a top-level item, or omit nav.group for the default "Custom Views" group.
+  # weight positions the group in the cluster navbar (sorted high->low). Core groups: Cluster 99,
+  # Workloads 98, Service Discovery 96, Storage 95, Policy 94 — so 97 lands right after Workloads.
+  nav:
+    scope:      cluster
+    group:      custom-lists
+    groupLabel: Custom Lists
+    weight:     97
   source: |
     <script>
     import ResourceTable from '@shell/components/ResourceTable';
     export default {
       components: { ResourceTable },
-      async fetch() {
-        this.rows = await this.$store.dispatch('cluster/findAll', { type: 'pod' }).catch(() => []);
+      created() {
+        this.$store.dispatch('cluster/findAll', { type: 'pod' })
+          .then((rows) => { this.rows = rows; })
+          .catch(() => { this.rows = []; });
       },
       data() { return { rows: [] }; },
       computed: { schema() { return this.$store.getters['cluster/schemaFor']('pod'); } },

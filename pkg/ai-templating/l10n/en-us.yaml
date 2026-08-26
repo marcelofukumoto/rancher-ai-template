@@ -4,6 +4,8 @@ product:
 aiTemplating:
   settings:
     label: Settings
+  canvas:
+    label: Blank Canvas
 
 # Nicer nav/list labels for the CR types (ICU pluralization, keyed by lowercased schema id).
 typeLabel:

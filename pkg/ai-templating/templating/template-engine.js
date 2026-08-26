@@ -8,6 +8,7 @@
 // loadCluster hook, an extension owns a product and registers nav from an onEnter nav hook.
 
 import { DSL, ROOT } from '@shell/store/type-map';
+import { BLANK_CLUSTER } from '@shell/store/store-types.js';
 
 // ---- Steve types for the CRDs (group.kind, lowercased) ----
 export const CUSTOM_VIEW = 'templating.rancher.io.customview';
@@ -26,6 +27,18 @@ export const TEMPLATE_NAMESPACE = 'default';
 export const PRODUCT_NAME = 'ai-templating';
 export const ROUTE_SETTINGS = 'ai-templating-settings';
 export const ROUTE_VIEW = 'ai-templating-view';
+export const ROUTE_CANVAS = 'ai-templating-canvas';
+
+// Cluster-scoped custom views (spec.nav.scope === 'cluster') register into the core `explorer`
+// product so they appear in a cluster's navbar WITH cluster context — not under our global product.
+// ROUTE_CLUSTER_VIEW keeps the explorer product active (its route meta.product = 'explorer') and
+// carries a real :cluster, so the rendered view can use the `cluster` store.
+export const EXPLORER_PRODUCT = 'explorer';
+export const ROUTE_CLUSTER_VIEW = 'ai-templating-cluster-view';
+const CLUSTER_SCOPE = 'cluster';
+
+// The Blank Canvas — a single CustomView CR used as a fast live-authoring scratchpad.
+export const WHITE_CANVAS_NAME = 'white-canvas';
 
 const DEFAULT_GROUP = 'customViews';
 const DEFAULT_GROUP_WEIGHT = 50;
@@ -33,8 +46,9 @@ const DEFAULT_GROUP_WEIGHT = 50;
 // Templates loaded for the current pass; read back by the generic view page via getPageRef().
 let loadedTemplates = [];
 
-// Nav-entry names registered last pass (to drop entries whose CR was deleted).
+// Nav-entry names registered last pass, per product (to drop entries whose CR was deleted).
 let registeredNames = [];
+let registeredClusterNames = [];
 
 export function getLoadedTemplates() {
   return loadedTemplates;
@@ -176,13 +190,19 @@ function navGroup(group) {
   return `${ group }`.toLowerCase() === ROOT ? ROOT : group;
 }
 
-// Register a nav entry per RENDERED custom-view page (the actual runtime-compiled views). The
-// CR-type LISTS (Custom Views / Home Templates management) are registered separately as proper
-// resource lists in product.ts — this only handles the dynamic per-view pages.
-function registerNav(store) {
+/** A template is cluster-scoped when its nav asks for it — those go in the cluster (explorer) nav. */
+function isClusterScoped(template) {
+  return (template.nav || {}).scope === CLUSTER_SCOPE;
+}
+
+// Register nav entries for one product (our global product OR the core explorer product). Returns
+// the names it registered so the caller can track staleness per product. `clusterScoped` picks the
+// route: cluster views route to ROUTE_CLUSTER_VIEW with NO cluster param (the Nav injects the
+// current cluster); global views route to ROUTE_VIEW under BLANK_CLUSTER.
+function registerNavFor(store, product, templates, clusterScoped) {
   const {
     virtualType, basicType, weightGroup, labelGroup
-  } = DSL({ commit: store.commit }, PRODUCT_NAME);
+  } = DSL({ commit: store.commit }, product);
 
   const namesByGroup = {};
   const pushName = (group, name) => {
@@ -190,7 +210,7 @@ function registerNav(store) {
     namesByGroup[group].push(name);
   };
 
-  loadedTemplates.forEach((template) => {
+  templates.forEach((template) => {
     const nav = template.nav || {};
     const group = navGroup(nav.group);
     const groupWeight = typeof nav.weight === 'number' ? nav.weight : DEFAULT_GROUP_WEIGHT;
@@ -209,6 +229,8 @@ function registerNav(store) {
 
       pushName(group, name);
 
+      const route = clusterScoped ? { name: ROUTE_CLUSTER_VIEW, params: { pageId: page.id } } : { name: ROUTE_VIEW, params: { pageId: page.id, cluster: BLANK_CLUSTER } };
+
       virtualType({
         label:      page.name,
         group,
@@ -216,7 +238,7 @@ function registerNav(store) {
         name,
         icon:       template.metadata?.icon || 'compass',
         weight:     -10,
-        route:      { name: ROUTE_VIEW, params: { pageId: page.id } },
+        route,
         exact:      true,
       });
     });
@@ -224,23 +246,93 @@ function registerNav(store) {
 
   Object.entries(namesByGroup).forEach(([group, names]) => basicType(names, group));
 
-  const currentNames = Object.values(namesByGroup).flat();
-  const currentSet = new Set(currentNames);
-  const staleNames = registeredNames.filter((name) => !currentSet.has(name));
-
-  if (staleNames.length) {
-    store.commit('type-map/removeTypes', { product: PRODUCT_NAME, names: staleNames });
-  }
-
-  registeredNames = currentNames;
+  return Object.values(namesByGroup).flat();
 }
 
-/** Remove all dynamic rendered-view nav entries (disabled state). The static product nav
- * (Settings + CR-type lists) stays, so the feature can be managed / turned back on. */
+// Register a nav entry per RENDERED custom-view page (the actual runtime-compiled views). Global
+// views go in our product's nav; cluster-scoped ones go in the core `explorer` product so they show
+// in a cluster's navbar with cluster context. The CR-type LISTS (Custom Views / Home Templates
+// management) are registered separately as proper resource lists in product.ts.
+function registerNav(store) {
+  const global = loadedTemplates.filter((t) => !isClusterScoped(t));
+  const cluster = loadedTemplates.filter(isClusterScoped);
+
+  const currentNames = registerNavFor(store, PRODUCT_NAME, global, false);
+  const currentClusterNames = registerNavFor(store, EXPLORER_PRODUCT, cluster, true);
+
+  pruneStale(store, PRODUCT_NAME, registeredNames, currentNames);
+  pruneStale(store, EXPLORER_PRODUCT, registeredClusterNames, currentClusterNames);
+
+  registeredNames = currentNames;
+  registeredClusterNames = currentClusterNames;
+
+  refreshSideNav();
+}
+
+// Force the core SideNav to rebuild its groups. Our virtualTypes register into the type-map AFTER
+// the nav has already built (especially on a hard reload that lands directly in a cluster), and the
+// SideNav only rebuilds on a few watched values — none of which our registration changes. Rather
+// than fight that, find the SideNav instance in the live component tree and call getGroups().
+function refreshSideNav() {
+  try {
+    const app = window.$globalApp;
+    const root = app?.$?.subTree;
+
+    if (!root) {
+      return;
+    }
+
+    const seen = new Set();
+    const stack = [root];
+
+    while (stack.length) {
+      const vnode = stack.pop();
+
+      if (!vnode || typeof vnode !== 'object' || seen.has(vnode)) {
+        continue;
+      }
+      seen.add(vnode);
+
+      const comp = vnode.component;
+
+      if (comp?.proxy && typeof comp.proxy.getGroups === 'function') {
+        comp.proxy.getGroups();
+
+        return;
+      }
+
+      if (comp?.subTree) {
+        stack.push(comp.subTree);
+      }
+
+      if (Array.isArray(vnode.children)) {
+        vnode.children.forEach((c) => stack.push(c));
+      }
+    }
+  } catch (e) { /* best-effort nav refresh */ }
+}
+
+/** Drop nav entries (in `product`) whose CR was deleted since the last pass. */
+function pruneStale(store, product, previous, current) {
+  const currentSet = new Set(current);
+  const stale = previous.filter((name) => !currentSet.has(name));
+
+  if (stale.length) {
+    store.commit('type-map/removeTypes', { product, names: stale });
+  }
+}
+
+/** Remove all dynamic rendered-view nav entries (disabled state), in both products. The static
+ * product nav (Settings + CR-type lists) stays, so the feature can be managed / turned back on. */
 function clearEngineNav(store) {
   if (registeredNames.length) {
     store.commit('type-map/removeTypes', { product: PRODUCT_NAME, names: registeredNames });
     registeredNames = [];
+  }
+
+  if (registeredClusterNames.length) {
+    store.commit('type-map/removeTypes', { product: EXPLORER_PRODUCT, names: registeredClusterNames });
+    registeredClusterNames = [];
   }
 }
 

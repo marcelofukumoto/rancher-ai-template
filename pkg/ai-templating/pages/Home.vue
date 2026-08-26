@@ -42,6 +42,7 @@ export default {
       saveError:      '',
       applyStatus:    '',
       debounceTimer:  null,
+      editorWidth:    42,
     };
   },
 
@@ -119,6 +120,40 @@ export default {
       this.selectedName = name;
       this.draft = (name && this.savedCR(name)?.spec?.source) || '';
       this.debouncedDraft = this.draft;
+    },
+
+    // Drag the divider to resize the editor column (clamped 20–75%). Uses pointer capture on the
+    // handle so move/up keep firing even while the cursor is over the live preview, and always
+    // release. Without capture a missed mouseup — e.g. the preview re-rendering or a link inside it
+    // navigating mid-drag — would leave a global listener that resizes the editor on every later
+    // mouse move (the "it keeps resizing when I navigate" bug).
+    startResize(e) {
+      e.preventDefault();
+      const container = this.$refs.split;
+      const handle = e.currentTarget;
+
+      try {
+        handle.setPointerCapture(e.pointerId);
+      } catch (err) { /* unsupported — listeners below still clean up on pointerup */ }
+
+      const onMove = (ev) => {
+        const rect = container.getBoundingClientRect();
+        const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+
+        this.editorWidth = Math.max(20, Math.min(75, pct));
+      };
+      const onUp = (ev) => {
+        try {
+          handle.releasePointerCapture(ev.pointerId);
+        } catch (err) { /* ignore */ }
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+      };
+
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
     },
 
     // Persist the draft to the SELECTED saved template. Does NOT change what is applied.
@@ -231,7 +266,10 @@ export default {
 </script>
 
 <template>
-  <div class="ai-home">
+  <div
+    class="ai-home"
+    :class="{ 'ai-home--editing': showEditor }"
+  >
     <!-- Edit bar -->
     <div
       v-if="loaded && templatingEnabled"
@@ -304,9 +342,13 @@ export default {
     <!-- Editor: draft + chat (left), live preview (right) -->
     <div
       v-if="showEditor"
+      ref="split"
       class="ai-home__split"
     >
-      <div class="ai-home__editor">
+      <div
+        class="ai-home__editor"
+        :style="{ width: editorWidth + '%' }"
+      >
         <textarea
           v-model="draft"
           class="ai-home__code"
@@ -316,6 +358,11 @@ export default {
           <HomeConfigChat :config-map-name="selectedName" />
         </div>
       </div>
+      <div
+        class="ai-home__resizer"
+        title="Drag to resize"
+        @pointerdown="startResize"
+      />
       <div class="ai-home__preview">
         <TemplateCode
           v-if="previewSource"
@@ -344,6 +391,15 @@ export default {
 
 <style lang="scss" scoped>
 .ai-home {
+  // While editing, fill the space under the app header and DON'T scroll the page — the editor
+  // and preview scroll internally instead. (--header-height falls back to the standard 54px.)
+  &--editing {
+    display:        flex;
+    flex-direction: column;
+    height:         calc(100vh - var(--header-height, 54px));
+    overflow:       hidden;
+  }
+
   &__editbar {
     display:       flex;
     align-items:   center;
@@ -352,6 +408,7 @@ export default {
     border-bottom: 1px solid var(--border);
     background:    var(--box-bg);
     flex-wrap:     wrap;
+    flex:          0 0 auto;
   }
 
   &__label {
@@ -376,20 +433,36 @@ export default {
   }
 
   &__split {
-    display: flex;
-    gap:     12px;
-    height:  calc(100vh - 110px);
-    padding: 12px;
+    display:    flex;
+    gap:        0;
+    flex:       1 1 auto;
+    min-height: 0;
+    padding:    12px;
+    overflow:   hidden;
   }
 
   &__editor {
     display:        flex;
     flex-direction: column;
-    width:          42%;
-    min-width:      360px;
+    // width comes from the inline editorWidth%; don't let a wide preview (a full dashboard render)
+    // shrink the editor past it — the preview (min-width:0, overflow:auto) absorbs + scrolls instead.
+    flex:           0 0 auto;
+    min-width:      280px;
     border:         1px solid var(--border);
     border-radius:  var(--border-radius);
     overflow:       hidden;
+  }
+
+  &__resizer {
+    flex:          0 0 8px;
+    margin:        0 2px;
+    cursor:        col-resize;
+    border-radius: 4px;
+    background:    var(--border);
+
+    &:hover {
+      background: var(--primary);
+    }
   }
 
   &__code {
@@ -413,6 +486,7 @@ export default {
 
   &__preview {
     flex:          1 1 auto;
+    min-width:     0;
     border:        1px solid var(--border);
     border-radius: var(--border-radius);
     overflow:      auto;

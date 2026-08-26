@@ -41,7 +41,7 @@ export default {
     // persona/contract. Must be applied + enabled in the cluster.
     agent: {
       type:    String,
-      default: 'home-editor-config',
+      default: 'template-home-editor',
     },
 
     // Prepended to each outgoing message: a tiny per-request line naming the target ConfigMap. The
