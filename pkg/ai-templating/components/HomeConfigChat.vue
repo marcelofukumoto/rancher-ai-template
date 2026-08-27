@@ -56,6 +56,13 @@ export default {
       type:    String,
       default: 'home',
     },
+
+    // Human-facing name for the agent persona, shown in the chat UI (role label, placeholder, hint).
+    // The Home editor uses "Home Editor"; the Blank Canvas passes the code-builder's name.
+    personaLabel: {
+      type:    String,
+      default: 'Home Editor',
+    },
   },
 
   data() {
@@ -232,9 +239,9 @@ export default {
         v-if="!messages.length"
         class="home-chat__empty text-muted"
       >
-        Ask the Home Editor to change the SELECTED template — e.g. “add a welcome header and list
-        my clusters as cards”. It edits <code>default/{{ configMapName || 'home' }}</code> (not the
-        applied page); the editor + preview update when it saves.
+        Ask the {{ personaLabel }} to change what you’re editing — e.g. “add a welcome header and
+        list my clusters as cards”. It edits <code>default/{{ configMapName || 'home' }}</code>; the
+        editor + preview update when it saves.
       </div>
       <div
         v-for="(m, i) in messages"
@@ -243,7 +250,7 @@ export default {
         :class="`home-chat__msg--${ m.role }`"
       >
         <div class="home-chat__role">
-          {{ m.role === 'user' ? 'You' : 'Home Editor' }}
+          {{ m.role === 'user' ? 'You' : personaLabel }}
         </div>
         <div class="home-chat__bubble">
           <span v-if="m.content">{{ m.content }}</span>
@@ -255,7 +262,7 @@ export default {
             v-if="m.tool"
             class="home-chat__tool text-muted"
           >
-            ✎ updated the ConfigMap
+            ✎ applied the change
           </div>
         </div>
       </div>
@@ -272,7 +279,7 @@ export default {
       <textarea
         v-model="input"
         class="home-chat__box"
-        placeholder="Ask the Home Editor to change the page… (Enter to send, Shift+Enter for newline)"
+        :placeholder="`Ask the ${ personaLabel } to change the page… (Enter to send, Shift+Enter for newline)`"
         :disabled="streaming"
         @keydown="onKeydown"
       />

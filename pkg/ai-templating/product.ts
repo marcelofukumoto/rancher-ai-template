@@ -1,7 +1,8 @@
 import { IPlugin } from '@shell/core/types';
 import { BLANK_CLUSTER } from '@shell/store/store-types.js';
 import {
-  PRODUCT_NAME, ROUTE_SETTINGS, ROUTE_CANVAS, CUSTOM_VIEW, HOME_TEMPLATE, TEMPLATING_CONFIG
+  PRODUCT_NAME, EXPLORER_PRODUCT, ROUTE_SETTINGS, ROUTE_CANVAS, ROUTE_CLUSTER_CANVAS,
+  CUSTOM_VIEW, HOME_TEMPLATE, TEMPLATING_CONFIG
 } from './templating/template-engine';
 
 // The "AI Templating" product — a TOP-LEVEL global product (like Continuous Delivery / Cluster
@@ -56,4 +57,20 @@ export function init($extension: IPlugin, store: any): void {
   });
 
   basicType(['ai-templating-settings', 'ai-templating-canvas', HOME_TEMPLATE, CUSTOM_VIEW, TEMPLATING_CONFIG]);
+
+  // Also surface the Blank Canvas editor INSIDE every cluster (the core `explorer` product), so
+  // cluster-scoped views can be authored where the cluster is loaded and previews show real data.
+  // Registered statically here (not from the runtime engine) so it's present before the nav builds.
+  const explorer = $extension.DSL(store, EXPLORER_PRODUCT);
+
+  explorer.virtualType({
+    labelKey:   'aiTemplating.canvas.label',
+    name:       'ai-templating-cluster-canvas',
+    namespaced: false,
+    icon:       'compass',
+    weight:     -5,
+    exact:      true,
+    route:      { name: ROUTE_CLUSTER_CANVAS },
+  });
+  explorer.basicType(['ai-templating-cluster-canvas'], 'root'); // 'root' = top-level cluster nav
 }

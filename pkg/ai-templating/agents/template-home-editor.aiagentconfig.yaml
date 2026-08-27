@@ -8,7 +8,7 @@
 # This is the dashboard's Home editor agent. (shell/components/HomeConfigChat.vue prepends an
 # equivalent preamble for the in-page editor chat.)
 #
-# Like white-canvas-builder: no confirmation, terse, edits ONE HomeTemplate custom resource
+# Like blank-canvas-builder: no confirmation, terse, edits ONE HomeTemplate custom resource
 # (spec.source) in place. The Home page watches the applied template and hot-reloads on every change.
 #
 # WARNING: writes executable code to the cluster with no confirmation. Keep enabled only while

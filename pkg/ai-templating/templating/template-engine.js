@@ -35,10 +35,14 @@ export const ROUTE_CANVAS = 'ai-templating-canvas';
 // carries a real :cluster, so the rendered view can use the `cluster` store.
 export const EXPLORER_PRODUCT = 'explorer';
 export const ROUTE_CLUSTER_VIEW = 'ai-templating-cluster-view';
+// The Blank Canvas editor also lives at the CLUSTER level (inside a loaded cluster) so cluster-scoped
+// views preview against real cluster data — its route keeps the explorer product + a real :cluster.
+export const ROUTE_CLUSTER_CANVAS = 'ai-templating-cluster-canvas';
 const CLUSTER_SCOPE = 'cluster';
 
-// The Blank Canvas — a single CustomView CR used as a fast live-authoring scratchpad.
-export const WHITE_CANVAS_NAME = 'white-canvas';
+// Scratch CustomView CRs the Blank Canvas defaults to: one global, one per-cluster (cluster-scoped).
+export const BLANK_CANVAS_NAME = 'blank-canvas';
+export const CLUSTER_CANVAS_NAME = 'cluster-canvas';
 
 const DEFAULT_GROUP = 'customViews';
 const DEFAULT_GROUP_WEIGHT = 50;
@@ -213,11 +217,23 @@ function registerNavFor(store, product, templates, clusterScoped) {
   templates.forEach((template) => {
     const nav = template.nav || {};
     const group = navGroup(nav.group);
-    const groupWeight = typeof nav.weight === 'number' ? nav.weight : DEFAULT_GROUP_WEIGHT;
 
+    // Only label/weight a group when THIS view owns it — the extension's default "Custom Views"
+    // group (nav.group empty), or a group the view explicitly labels/positions. When a view merely
+    // JOINS an existing group (e.g. core "Workloads"), leave that group's label/weight untouched so
+    // we don't clobber it.
     if (group !== ROOT) {
-      labelGroup(group, nav.groupLabel || 'Custom Views');
-      weightGroup(group, groupWeight, true);
+      if (!nav.group) {
+        labelGroup(group, 'Custom Views');
+        weightGroup(group, DEFAULT_GROUP_WEIGHT, true);
+      } else {
+        if (nav.groupLabel) {
+          labelGroup(group, nav.groupLabel);
+        }
+        if (typeof nav.weight === 'number') {
+          weightGroup(group, nav.weight, true);
+        }
+      }
     }
 
     (template.pages || []).forEach((page) => {
@@ -231,13 +247,17 @@ function registerNavFor(store, product, templates, clusterScoped) {
 
       const route = clusterScoped ? { name: ROUTE_CLUSTER_VIEW, params: { pageId: page.id } } : { name: ROUTE_VIEW, params: { pageId: page.id, cluster: BLANK_CLUSTER } };
 
+      // nav.weight positions the GROUP; nav.itemWeight positions this item WITHIN its group (higher =
+      // higher up). Default -10 keeps custom views below core items when no item weight is given.
+      const itemWeight = typeof nav.itemWeight === 'number' ? nav.itemWeight : -10;
+
       virtualType({
         label:      page.name,
         group,
         namespaced: false,
         name,
         icon:       template.metadata?.icon || 'compass',
-        weight:     -10,
+        weight:     itemWeight,
         route,
         exact:      true,
       });
@@ -385,5 +405,95 @@ export function reloadCustomViews(store) {
     registerNav(store);
   } catch (e) {
     console.warn('[template-engine] reloadCustomViews failed', e); // eslint-disable-line no-console
+  }
+}
+
+// ---- CUSTOM VIEW EDITOR helpers (Blank Canvas) ----
+
+/** All CustomView CRs (for the editor's Load picker). */
+export function allCustomViews(getters) {
+  return getters['management/all']?.(CUSTOM_VIEW) || [];
+}
+
+/**
+ * Create-or-update a CustomView CR from the editor, then re-register nav so it appears/moves
+ * immediately. `scope` 'cluster' registers into the cluster (explorer) nav; falsy = global product.
+ */
+export async function saveCustomView(store, opts) {
+  const {
+    name, source, kind = 'code', displayName, icon, scope, group, groupLabel, weight, itemWeight
+  } = opts;
+
+  const nav = {};
+
+  if (scope) {
+    nav.scope = scope;
+  }
+  if (group) {
+    nav.group = group;
+  }
+  if (groupLabel) {
+    nav.groupLabel = groupLabel;
+  }
+  if (typeof weight === 'number' && !Number.isNaN(weight)) {
+    nav.weight = weight;
+  }
+  if (typeof itemWeight === 'number' && !Number.isNaN(itemWeight)) {
+    nav.itemWeight = itemWeight;
+  }
+
+  const meta = { id: name, name: displayName || name };
+
+  if (icon) {
+    meta.icon = icon;
+  }
+
+  const existing = store.getters['management/byId'](CUSTOM_VIEW, `${ TEMPLATE_NAMESPACE }/${ name }`) ||
+    allCustomViews(store.getters).find((c) => c.metadata?.name === name);
+
+  if (existing) {
+    existing.spec = {
+      ...(existing.spec || {}), kind, meta: { ...(existing.spec?.meta || {}), ...meta }, nav, source
+    };
+    await existing.save();
+  } else {
+    const cr = await store.dispatch('management/create', {
+      type:     CUSTOM_VIEW,
+      metadata: { name, namespace: TEMPLATE_NAMESPACE },
+      spec:     {
+        kind, meta, nav, source
+      },
+    });
+
+    await cr.save();
+  }
+
+  reloadCustomViews(store);
+}
+
+/**
+ * Build the target nav as { group -> items } for the placement UI, using the same type-map getTree
+ * the SideNav uses. `product` is PRODUCT_NAME (global) or EXPLORER_PRODUCT; clusterId is the cluster
+ * whose explorer nav to read (ignored for the global product). Labels are de-HTML'd for display.
+ */
+export function navTreeFor(store, product, clusterId) {
+  try {
+    const all = store.getters['type-map/allTypes'](product, ['basic']) || {};
+    const tree = store.getters['type-map/getTree'](product, 'basic', all.basic || {}, clusterId, 'both', null, null) || [];
+
+    return tree.map((grp) => ({
+      name:   grp.name,
+      label:  (grp.label || grp.name || '').replace(/<[^>]*>/g, '').trim(),
+      weight: grp.weight,
+      items:  (grp.children || []).map((c) => ({
+        name:   c.name,
+        label:  (c.labelDisplay || c.label || c.name || '').replace(/<[^>]*>/g, '').trim(),
+        weight: c.weight,
+      })),
+    }));
+  } catch (e) {
+    console.warn('[template-engine] navTreeFor failed', e); // eslint-disable-line no-console
+
+    return [];
   }
 }

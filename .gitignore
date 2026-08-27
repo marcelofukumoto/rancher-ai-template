@@ -71,3 +71,5 @@ Thumbs.db
 
 # Locally built assets (extensions)
 dist-pkg
+# Playwright Agent CLI artifacts
+.playwright-cli/

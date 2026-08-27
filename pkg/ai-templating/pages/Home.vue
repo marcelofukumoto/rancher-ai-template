@@ -98,6 +98,15 @@ export default {
         this.debouncedDraft = val;
       }, 300);
     },
+
+    // When templating is re-enabled live (kill switch), re-resolve the applied Home template so the
+    // templated Home comes straight back without a reload.
+    templatingEnabled(enabled) {
+      if (enabled) {
+        this.appliedName = appliedHomeTemplateName(this.$store.getters, this.userId);
+        this.source = homeTemplateSource(this.$store.getters, this.appliedName);
+      }
+    },
   },
 
   methods: {
@@ -122,38 +131,42 @@ export default {
       this.debouncedDraft = this.draft;
     },
 
-    // Drag the divider to resize the editor column (clamped 20–75%). Uses pointer capture on the
-    // handle so move/up keep firing even while the cursor is over the live preview, and always
-    // release. Without capture a missed mouseup — e.g. the preview re-rendering or a link inside it
-    // navigating mid-drag — would leave a global listener that resizes the editor on every later
-    // mouse move (the "it keeps resizing when I navigate" bug).
+    // Drag the divider to resize the editor column (clamped 20–75%). Listeners live on WINDOW, not
+    // the handle: window always receives pointerup no matter where the cursor is when released (over
+    // the re-rendering preview, off-screen, ...), so the drag can't get "stuck" and leak a move
+    // listener that resizes on every later mouse move. (setPointerCapture is deliberately NOT used —
+    // capture can be lost when the editor re-renders mid-drag, which is exactly what stuck it before.)
     startResize(e) {
       e.preventDefault();
       const container = this.$refs.split;
-      const handle = e.currentTarget;
 
-      try {
-        handle.setPointerCapture(e.pointerId);
-      } catch (err) { /* unsupported — listeners below still clean up on pointerup */ }
+      if (!container) {
+        return;
+      }
+
+      // Anchor the drag to the grab point: track the delta from where the pointer went down, not the
+      // pointer's absolute position. The handle sits a few px to the right of the editor's edge, so
+      // absolute tracking would snap (jump) the pane to the cursor on the first move.
+      const startX = e.clientX;
+      const startWidth = this.editorWidth;
+      const totalWidth = container.getBoundingClientRect().width || 1;
 
       const onMove = (ev) => {
-        const rect = container.getBoundingClientRect();
-        const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+        const deltaPct = ((ev.clientX - startX) / totalWidth) * 100;
 
-        this.editorWidth = Math.max(20, Math.min(75, pct));
+        this.editorWidth = Math.max(20, Math.min(75, startWidth + deltaPct));
       };
-      const onUp = (ev) => {
-        try {
-          handle.releasePointerCapture(ev.pointerId);
-        } catch (err) { /* ignore */ }
-        handle.removeEventListener('pointermove', onMove);
-        handle.removeEventListener('pointerup', onUp);
-        handle.removeEventListener('pointercancel', onUp);
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        window.removeEventListener('blur', onUp);
       };
 
-      handle.addEventListener('pointermove', onMove);
-      handle.addEventListener('pointerup', onUp);
-      handle.addEventListener('pointercancel', onUp);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+      window.addEventListener('blur', onUp);
     },
 
     // Persist the draft to the SELECTED saved template. Does NOT change what is applied.
@@ -378,10 +391,11 @@ export default {
       </div>
     </div>
 
-    <!-- Normal render -->
+    <!-- Normal render. Gate on templatingEnabled so the kill switch (⌘/Ctrl+Shift+.) swaps between
+         the templated Home and stock Rancher LIVE, without a reload. -->
     <template v-else>
       <TemplateCode
-        v-if="source"
+        v-if="templatingEnabled && source"
         :source="source"
       />
       <StockHome v-else-if="loaded" />
@@ -459,6 +473,8 @@ export default {
     cursor:        col-resize;
     border-radius: 4px;
     background:    var(--border);
+    user-select:   none;
+    touch-action:  none;
 
     &:hover {
       background: var(--primary);
