@@ -1,20 +1,26 @@
 import { RouteRecordRaw } from 'vue-router';
 import {
-  PRODUCT_NAME, EXPLORER_PRODUCT, ROUTE_SETTINGS, ROUTE_VIEW, ROUTE_CANVAS, ROUTE_CLUSTER_VIEW,
-  ROUTE_CLUSTER_CANVAS
+  PRODUCT_NAME, EXPLORER_PRODUCT, ROUTE_SETTINGS, ROUTE_TEMPLATES, ROUTE_VIEW, ROUTE_CANVAS,
+  ROUTE_CLUSTER_VIEW, ROUTE_CLUSTER_CANVAS
 } from '../templating/template-engine';
 
 import Settings from '../pages/Settings.vue';
+import TemplatesList from '../pages/TemplatesList.vue';
 import TemplateView from '../pages/TemplateView.vue';
 import BlankCanvas from '../pages/BlankCanvas.vue';
 
-// Cluster-scoped routes for the AI Templating product. The CR-type lists use the core generic
-// resource routes (registered via basicType in product.ts); these are the custom pages.
+// Routes for the AI Templating product.
 const routes: RouteRecordRaw[] = [
   {
     name:      ROUTE_SETTINGS,
     path:      `/c/:cluster/${ PRODUCT_NAME }`,
     component: Settings,
+    meta:      { product: PRODUCT_NAME },
+  },
+  {
+    name:      ROUTE_TEMPLATES,
+    path:      `/c/:cluster/${ PRODUCT_NAME }/templates`,
+    component: TemplatesList,
     meta:      { product: PRODUCT_NAME },
   },
   {

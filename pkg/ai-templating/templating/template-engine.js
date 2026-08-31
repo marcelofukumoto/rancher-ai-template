@@ -1,58 +1,127 @@
-// Runtime template engine (extension edition).
+// Runtime template engine (extension edition) — ConfigMap storage.
 //
-// Reads templates from CRDs (templating.rancher.io) in the local/Rancher cluster via the
-// MANAGEMENT store — so custom views, Home templates and the kill-switch config are GLOBAL —
-// and registers custom-view pages under this extension's own "AI Templating" product nav.
-//
-// This replaces the in-core ConfigMap engine: instead of ConfigMaps in each cluster + a
-// loadCluster hook, an extension owns a product and registers nav from an onEnter nav hook.
+// Custom views, Home templates and the kill-switch config are stored as labeled ConfigMaps in the
+// local cluster's `default` namespace, read via the MANAGEMENT store (Steve `/v1/`). ConfigMaps are
+// used (instead of a templating.rancher.io CRD) because the Rancher AI MCP server can only write a
+// fixed allow-list of kinds — ConfigMaps are on it, custom CRDs are not — so this is what lets the
+// AI agents actually edit templates. The SFC lives in data['view.vue']; metadata/nav are JSON.
 
 import { DSL, ROOT } from '@shell/store/type-map';
 import { BLANK_CLUSTER } from '@shell/store/store-types.js';
 
-// ---- Steve types for the CRDs (group.kind, lowercased) ----
-export const CUSTOM_VIEW = 'templating.rancher.io.customview';
-export const HOME_TEMPLATE = 'templating.rancher.io.hometemplate';
-export const TEMPLATING_CONFIG = 'templating.rancher.io.templatingconfig';
-
-// The TemplatingConfig singleton (kill switch + applied-Home pointer).
-export const CONFIG_NAMESPACE = 'default';
-export const CONFIG_NAME = 'config';
-export const CONFIG_ID = `${ CONFIG_NAMESPACE }/${ CONFIG_NAME }`;
-
-// Namespace we read/write CustomView + HomeTemplate CRs in.
+// ---- ConfigMap storage ----
+export const CONFIGMAP = 'configmap';
 export const TEMPLATE_NAMESPACE = 'default';
+
+// One marker label selects every templating ConfigMap (so we load only these, not the whole cluster);
+// a type label distinguishes them.
+export const LABEL_MARKER = 'templates.rancher.io/ai-templating';
+export const LABEL_TYPE = 'templates.rancher.io/type';
+export const TYPE_VIEW = 'custom-view';
+export const TYPE_HOME = 'home-template';
+export const TYPE_CONFIG = 'config';
+
+// ConfigMap data keys.
+export const SFC_KEY = 'view.vue'; // the Vue SFC (what the AI edits)
+
+// The singleton config ConfigMap (kill switch + applied-Home pointer).
+export const CONFIG_NAME = 'templating-config';
+export const CONFIG_ID = `${ TEMPLATE_NAMESPACE }/${ CONFIG_NAME }`;
 
 // This extension's product + route names (kept here so registerNav and routing/index.ts agree).
 export const PRODUCT_NAME = 'ai-templating';
 export const ROUTE_SETTINGS = 'ai-templating-settings';
+export const ROUTE_TEMPLATES = 'ai-templating-templates';
 export const ROUTE_VIEW = 'ai-templating-view';
 export const ROUTE_CANVAS = 'ai-templating-canvas';
 
-// Cluster-scoped custom views (spec.nav.scope === 'cluster') register into the core `explorer`
-// product so they appear in a cluster's navbar WITH cluster context — not under our global product.
-// ROUTE_CLUSTER_VIEW keeps the explorer product active (its route meta.product = 'explorer') and
-// carries a real :cluster, so the rendered view can use the `cluster` store.
+// Cluster-scoped custom views (nav.scope === 'cluster') register into the core `explorer` product so
+// they appear in a cluster's navbar WITH cluster context — not under our global product.
 export const EXPLORER_PRODUCT = 'explorer';
 export const ROUTE_CLUSTER_VIEW = 'ai-templating-cluster-view';
-// The Blank Canvas editor also lives at the CLUSTER level (inside a loaded cluster) so cluster-scoped
-// views preview against real cluster data — its route keeps the explorer product + a real :cluster.
 export const ROUTE_CLUSTER_CANVAS = 'ai-templating-cluster-canvas';
 const CLUSTER_SCOPE = 'cluster';
 
-// Scratch CustomView CRs the Blank Canvas defaults to: one global, one per-cluster (cluster-scoped).
+// Scratch ConfigMaps the Blank Canvas defaults to: one global, one per-cluster (cluster-scoped).
 export const BLANK_CANVAS_NAME = 'blank-canvas';
 export const CLUSTER_CANVAS_NAME = 'cluster-canvas';
 
 const DEFAULT_GROUP = 'customViews';
 const DEFAULT_GROUP_WEIGHT = 50;
 
-// Templates loaded for the current pass; read back by the generic view page via getPageRef().
+// Load-time cache. Populated once (findAll) so getters below are cheap + reactive off the store.
 let loadedTemplates = [];
-
-// Nav-entry names registered last pass, per product (to drop entries whose CR was deleted).
 let registeredNames = [];
 let registeredClusterNames = [];
+
+// ---- ConfigMap helpers ----
+function safeParse(str, fallback) {
+  if (!str) {
+    return fallback;
+  }
+  try {
+    return JSON.parse(str);
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function labelOf(cm, key) {
+  return cm?.metadata?.labels?.[key];
+}
+
+/** Every templating ConfigMap currently in the management store cache (marker-labeled). */
+function templatingCMs(getters) {
+  return (getters['management/all']?.(CONFIGMAP) || []).filter((cm) => labelOf(cm, LABEL_MARKER) === 'true');
+}
+
+function cmsOfType(getters, type) {
+  return templatingCMs(getters).filter((cm) => labelOf(cm, LABEL_TYPE) === type);
+}
+
+function cmById(getters, name) {
+  return getters['management/byId']?.(CONFIGMAP, `${ TEMPLATE_NAMESPACE }/${ name }`) ||
+    templatingCMs(getters).find((cm) => cm.metadata?.name === name);
+}
+
+/** Normalize a custom-view ConfigMap into the internal { id, metadata, spec } shape used everywhere. */
+function cmToView(cm) {
+  const d = cm.data || {};
+
+  return {
+    id:       cm.id,
+    metadata: cm.metadata,
+    spec:     {
+      kind:     d.kind || 'code',
+      meta:     safeParse(d.meta, {}),
+      nav:      safeParse(d.nav, {}),
+      source:   d[SFC_KEY] || d.source || '',
+      template: safeParse(d.template, null),
+    },
+  };
+}
+
+/** Build the ConfigMap `data` object for a custom view. */
+function viewData({
+  kind, meta, nav, source, template
+}) {
+  const data = {
+    kind: kind || 'code', [SFC_KEY]: source || '', meta: JSON.stringify(meta || {})
+  };
+
+  if (nav && Object.keys(nav).length) {
+    data.nav = JSON.stringify(nav);
+  }
+  if (template) {
+    data.template = JSON.stringify(template);
+  }
+
+  return data;
+}
+
+const viewLabels = { [LABEL_MARKER]: 'true', [LABEL_TYPE]: TYPE_VIEW };
+const homeLabels = { [LABEL_MARKER]: 'true', [LABEL_TYPE]: TYPE_HOME };
+const configLabels = { [LABEL_MARKER]: 'true', [LABEL_TYPE]: TYPE_CONFIG };
 
 export function getLoadedTemplates() {
   return loadedTemplates;
@@ -71,18 +140,13 @@ export function getPageRef(pageId) {
   return null;
 }
 
-/**
- * Build the internal template shape from a CustomView CR. spec is already an object (no
- * JSON.parse): { kind, meta{id,name,icon}, nav{...}, template{pages:[...]}, source }.
- */
-function parseCustomView(cr) {
-  const spec = cr.spec || {};
+/** Build the internal template shape from a normalized view ({ id, metadata, spec }). */
+function parseCustomView(view) {
+  const spec = view.spec || {};
   const meta = spec.meta || {};
-  const id = meta.id || cr.metadata?.name;
+  const id = meta.id || view.metadata?.name;
 
   if (!id) {
-    console.warn('[template-engine] CustomView missing meta.id', cr.id); // eslint-disable-line no-console
-
     return null;
   }
 
@@ -93,8 +157,6 @@ function parseCustomView(cr) {
 
   if (spec.kind === 'code') {
     if (!spec.source) {
-      console.warn('[template-engine] code CustomView missing spec.source', cr.id); // eslint-disable-line no-console
-
       return null;
     }
 
@@ -111,8 +173,6 @@ function parseCustomView(cr) {
   const pages = spec.template?.pages;
 
   if (!Array.isArray(pages)) {
-    console.warn('[template-engine] template CustomView missing spec.template.pages', cr.id); // eslint-disable-line no-console
-
     return null;
   }
 
@@ -121,37 +181,36 @@ function parseCustomView(cr) {
   };
 }
 
-function extractTemplates(crs) {
-  return (crs || []).map(parseCustomView).filter(Boolean);
+function extractTemplates(getters) {
+  return cmsOfType(getters, TYPE_VIEW).map(cmToView).map(parseCustomView).filter(Boolean);
 }
 
-// ---- GLOBAL KILL SWITCH (TemplatingConfig CR) ----
-// spec.enabled === false disables everything. Absent, or true, means enabled (the default).
+// ---- GLOBAL KILL SWITCH (config ConfigMap) ----
+// data.enabled === 'false' disables everything. Absent, or 'true', means enabled (the default).
 export function isTemplatingEnabled(getters) {
-  const cr = getters['management/byId']?.(TEMPLATING_CONFIG, CONFIG_ID);
+  const cm = cmById(getters, CONFIG_NAME);
 
-  return !cr || cr.spec?.enabled !== false;
+  return !cm || cm.data?.enabled !== 'false';
 }
 
-/**
- * Flip (or set) the kill switch: ensure the TemplatingConfig CR exists, write spec.enabled,
- * and re-register nav. Home reacts on its own via the reactive management getter.
- */
+/** Flip (or set) the kill switch, then re-register nav. */
 export async function toggleTemplating(store, enabled) {
   const desired = typeof enabled === 'boolean' ? enabled : !isTemplatingEnabled(store.getters);
-  const existing = store.getters['management/byId'](TEMPLATING_CONFIG, CONFIG_ID);
+  const existing = cmById(store.getters, CONFIG_NAME);
 
   if (existing) {
-    existing.spec = { ...(existing.spec || {}), enabled: desired };
+    existing.data = { ...(existing.data || {}), enabled: desired ? 'true' : 'false' };
     await existing.save();
   } else {
-    const cr = await store.dispatch('management/create', {
-      type:     TEMPLATING_CONFIG,
-      metadata: { name: CONFIG_NAME, namespace: CONFIG_NAMESPACE },
-      spec:     { enabled: desired },
+    const cm = await store.dispatch('management/create', {
+      type:     CONFIGMAP,
+      metadata: {
+        name: CONFIG_NAME, namespace: TEMPLATE_NAMESPACE, labels: configLabels
+      },
+      data: { enabled: desired ? 'true' : 'false' },
     });
 
-    await cr.save();
+    await cm.save();
   }
 
   reloadCustomViews(store);
@@ -159,33 +218,51 @@ export async function toggleTemplating(store, enabled) {
   return desired;
 }
 
-// ---- HOME resolution (applied HomeTemplate) ----
-/** The HomeTemplate name applied for a user: config.spec.home.users[userId] || .global. */
+// ---- HOME resolution (applied Home template) ----
+function homeConfig(getters) {
+  return safeParse(cmById(getters, CONFIG_NAME)?.data?.home, {});
+}
+
+/** The Home template name applied for a user: home.users[userId] || home.global. */
 export function appliedHomeTemplateName(getters, userId) {
-  const cr = getters['management/byId']?.(TEMPLATING_CONFIG, CONFIG_ID);
-  const home = cr?.spec?.home || {};
-
-  return (userId && home.users?.[userId]) || home.global || null;
+  return appliedHomeScopes(getters, userId).resolved;
 }
 
-/** All saved HomeTemplate CRs (for the editor's template picker). */
+/**
+ * The applied Home template names split by scope, plus the one THIS user actually sees.
+ * A per-user pick (home.users[userId]) overrides the global default, so `resolved = user || global`.
+ * Lets the editor identify each template correctly (global default vs. your personal Home).
+ */
+export function appliedHomeScopes(getters, userId) {
+  const home = homeConfig(getters);
+  const global = home.global || null;
+  const user = (userId && home.users?.[userId]) || null;
+
+  return {
+    global, user, resolved: user || global
+  };
+}
+
+/** All saved Home templates (normalized) for the editor's picker. */
 export function savedHomeTemplates(getters) {
-  return getters['management/all']?.(HOME_TEMPLATE) || [];
+  return cmsOfType(getters, TYPE_HOME).map((cm) => ({
+    metadata: cm.metadata,
+    spec:     { displayName: cm.data?.displayName || cm.metadata?.name, source: cm.data?.[SFC_KEY] || cm.data?.source || '' },
+  }));
 }
 
-/** SFC source of a HomeTemplate by name (empty string if none). */
+/** SFC source of a Home template by name (empty string if none). */
 export function homeTemplateSource(getters, name) {
   if (!name) {
     return '';
   }
 
-  const byId = getters['management/byId']?.(HOME_TEMPLATE, `${ TEMPLATE_NAMESPACE }/${ name }`);
-  const cr = byId || savedHomeTemplates(getters).find((h) => h.metadata?.name === name);
+  const cm = cmById(getters, name);
 
-  return cr?.spec?.source || '';
+  return cm?.data?.[SFC_KEY] || cm?.data?.source || '';
 }
 
-// ---- NAV registration (into this extension's product) ----
+// ---- NAV registration (unchanged from the CRD version) ----
 function navGroup(group) {
   if (!group) {
     return DEFAULT_GROUP;
@@ -194,15 +271,10 @@ function navGroup(group) {
   return `${ group }`.toLowerCase() === ROOT ? ROOT : group;
 }
 
-/** A template is cluster-scoped when its nav asks for it — those go in the cluster (explorer) nav. */
 function isClusterScoped(template) {
   return (template.nav || {}).scope === CLUSTER_SCOPE;
 }
 
-// Register nav entries for one product (our global product OR the core explorer product). Returns
-// the names it registered so the caller can track staleness per product. `clusterScoped` picks the
-// route: cluster views route to ROUTE_CLUSTER_VIEW with NO cluster param (the Nav injects the
-// current cluster); global views route to ROUTE_VIEW under BLANK_CLUSTER.
 function registerNavFor(store, product, templates, clusterScoped) {
   const {
     virtualType, basicType, weightGroup, labelGroup
@@ -218,10 +290,6 @@ function registerNavFor(store, product, templates, clusterScoped) {
     const nav = template.nav || {};
     const group = navGroup(nav.group);
 
-    // Only label/weight a group when THIS view owns it — the extension's default "Custom Views"
-    // group (nav.group empty), or a group the view explicitly labels/positions. When a view merely
-    // JOINS an existing group (e.g. core "Workloads"), leave that group's label/weight untouched so
-    // we don't clobber it.
     if (group !== ROOT) {
       if (!nav.group) {
         labelGroup(group, 'Custom Views');
@@ -246,9 +314,6 @@ function registerNavFor(store, product, templates, clusterScoped) {
       pushName(group, name);
 
       const route = clusterScoped ? { name: ROUTE_CLUSTER_VIEW, params: { pageId: page.id } } : { name: ROUTE_VIEW, params: { pageId: page.id, cluster: BLANK_CLUSTER } };
-
-      // nav.weight positions the GROUP; nav.itemWeight positions this item WITHIN its group (higher =
-      // higher up). Default -10 keeps custom views below core items when no item weight is given.
       const itemWeight = typeof nav.itemWeight === 'number' ? nav.itemWeight : -10;
 
       virtualType({
@@ -269,10 +334,6 @@ function registerNavFor(store, product, templates, clusterScoped) {
   return Object.values(namesByGroup).flat();
 }
 
-// Register a nav entry per RENDERED custom-view page (the actual runtime-compiled views). Global
-// views go in our product's nav; cluster-scoped ones go in the core `explorer` product so they show
-// in a cluster's navbar with cluster context. The CR-type LISTS (Custom Views / Home Templates
-// management) are registered separately as proper resource lists in product.ts.
 function registerNav(store) {
   const global = loadedTemplates.filter((t) => !isClusterScoped(t));
   const cluster = loadedTemplates.filter(isClusterScoped);
@@ -289,10 +350,7 @@ function registerNav(store) {
   refreshSideNav();
 }
 
-// Force the core SideNav to rebuild its groups. Our virtualTypes register into the type-map AFTER
-// the nav has already built (especially on a hard reload that lands directly in a cluster), and the
-// SideNav only rebuilds on a few watched values — none of which our registration changes. Rather
-// than fight that, find the SideNav instance in the live component tree and call getGroups().
+// Force the core SideNav to rebuild its groups (our virtualTypes register after the nav has built).
 function refreshSideNav() {
   try {
     const app = window.$globalApp;
@@ -332,7 +390,6 @@ function refreshSideNav() {
   } catch (e) { /* best-effort nav refresh */ }
 }
 
-/** Drop nav entries (in `product`) whose CR was deleted since the last pass. */
 function pruneStale(store, product, previous, current) {
   const currentSet = new Set(current);
   const stale = previous.filter((name) => !currentSet.has(name));
@@ -342,8 +399,6 @@ function pruneStale(store, product, previous, current) {
   }
 }
 
-/** Remove all dynamic rendered-view nav entries (disabled state), in both products. The static
- * product nav (Settings + CR-type lists) stays, so the feature can be managed / turned back on. */
 function clearEngineNav(store) {
   if (registeredNames.length) {
     store.commit('type-map/removeTypes', { product: PRODUCT_NAME, names: registeredNames });
@@ -356,18 +411,24 @@ function clearEngineNav(store) {
   }
 }
 
-/**
- * Load CustomView CRs and (re)register nav. Called from the extension's onEnter nav hook and
- * from reloadCustomViews. Swallows errors so a bad template never blocks navigation.
- */
+// Fetch the templating ConfigMaps (marker-labeled only) into the management store cache. Shared by
+// the nav loader and the editors so we never pull every ConfigMap in the cluster.
+export async function fetchTemplatingConfigMaps(store) {
+  if (!store.getters['management/schemaFor'](CONFIGMAP)) {
+    return [];
+  }
+
+  const url = `/v1/configmaps?labelSelector=${ encodeURIComponent(`${ LABEL_MARKER }=true`) }`;
+
+  return store.dispatch('management/findAll', { type: CONFIGMAP, opt: { url, force: true } }).catch(() => []);
+}
+
+// Load templating ConfigMaps (marker-labeled only) and (re)register nav.
 export async function loadCustomViews(store) {
   loadedTemplates = [];
 
   try {
-    // Load the kill-switch config first, then bail (Sources-only) if disabled.
-    try {
-      await store.dispatch('management/find', { type: TEMPLATING_CONFIG, id: CONFIG_ID });
-    } catch (e) { /* absent/forbidden -> treated as enabled */ }
+    await fetchTemplatingConfigMaps(store);
 
     if (!isTemplatingEnabled(store.getters)) {
       clearEngineNav(store);
@@ -375,12 +436,7 @@ export async function loadCustomViews(store) {
       return;
     }
 
-    if (store.getters['management/schemaFor'](CUSTOM_VIEW)) {
-      const crs = await store.dispatch('management/findAll', { type: CUSTOM_VIEW });
-
-      loadedTemplates = extractTemplates(crs);
-    }
-
+    loadedTemplates = extractTemplates(store.getters);
     registerNav(store);
   } catch (e) {
     console.warn('[template-engine] loadCustomViews failed', e); // eslint-disable-line no-console
@@ -398,10 +454,7 @@ export function reloadCustomViews(store) {
       return;
     }
 
-    if (store.getters['management/schemaFor'](CUSTOM_VIEW)) {
-      loadedTemplates = extractTemplates(store.getters['management/all'](CUSTOM_VIEW));
-    }
-
+    loadedTemplates = extractTemplates(store.getters);
     registerNav(store);
   } catch (e) {
     console.warn('[template-engine] reloadCustomViews failed', e); // eslint-disable-line no-console
@@ -410,15 +463,19 @@ export function reloadCustomViews(store) {
 
 // ---- CUSTOM VIEW EDITOR helpers (Blank Canvas) ----
 
-/** All CustomView CRs (for the editor's Load picker). */
+/** All custom views (normalized { id, metadata, spec }) for the editor's Load picker. */
 export function allCustomViews(getters) {
-  return getters['management/all']?.(CUSTOM_VIEW) || [];
+  return cmsOfType(getters, TYPE_VIEW).map(cmToView);
 }
 
-/**
- * Create-or-update a CustomView CR from the editor, then re-register nav so it appears/moves
- * immediately. `scope` 'cluster' registers into the cluster (explorer) nav; falsy = global product.
- */
+/** One custom view by name (normalized), or null. */
+export function customViewByName(getters, name) {
+  const cm = cmById(getters, name);
+
+  return cm && labelOf(cm, LABEL_TYPE) === TYPE_VIEW ? cmToView(cm) : null;
+}
+
+/** Create-or-update a custom-view ConfigMap from the editor, then re-register nav. */
 export async function saveCustomView(store, opts) {
   const {
     name, source, kind = 'code', displayName, icon, scope, group, groupLabel, weight, itemWeight
@@ -448,33 +505,114 @@ export async function saveCustomView(store, opts) {
     meta.icon = icon;
   }
 
-  const existing = store.getters['management/byId'](CUSTOM_VIEW, `${ TEMPLATE_NAMESPACE }/${ name }`) ||
-    allCustomViews(store.getters).find((c) => c.metadata?.name === name);
+  const existing = cmById(store.getters, name);
 
-  if (existing) {
-    existing.spec = {
-      ...(existing.spec || {}), kind, meta: { ...(existing.spec?.meta || {}), ...meta }, nav, source
-    };
+  if (existing && labelOf(existing, LABEL_TYPE) === TYPE_VIEW) {
+    const prevMeta = safeParse(existing.data?.meta, {});
+
+    existing.data = viewData({
+      kind, meta: { ...prevMeta, ...meta }, nav, source
+    });
     await existing.save();
   } else {
-    const cr = await store.dispatch('management/create', {
-      type:     CUSTOM_VIEW,
-      metadata: { name, namespace: TEMPLATE_NAMESPACE },
-      spec:     {
-        kind, meta, nav, source
+    const cm = await store.dispatch('management/create', {
+      type:     CONFIGMAP,
+      metadata: {
+        name, namespace: TEMPLATE_NAMESPACE, labels: viewLabels
       },
+      data: viewData({
+        kind, meta, nav, source
+      }),
     });
 
-    await cr.save();
+    await cm.save();
   }
 
   reloadCustomViews(store);
 }
 
+/** Create-or-update a Home template ConfigMap (used by the Home editor). */
+export async function saveHomeTemplate(store, { name, source, displayName }) {
+  const existing = cmById(store.getters, name);
+  const data = { [SFC_KEY]: source || '', displayName: displayName || name };
+
+  if (existing && labelOf(existing, LABEL_TYPE) === TYPE_HOME) {
+    existing.data = { ...(existing.data || {}), ...data };
+    await existing.save();
+
+    return existing;
+  }
+
+  const cm = await store.dispatch('management/create', {
+    type:     CONFIGMAP,
+    metadata: {
+      name, namespace: TEMPLATE_NAMESPACE, labels: homeLabels
+    },
+    data,
+  });
+
+  await cm.save();
+
+  return cm;
+}
+
+/** Persist the applied-Home map back onto the config ConfigMap (create it if missing). */
+async function persistHome(store, home) {
+  const existing = cmById(store.getters, CONFIG_NAME);
+
+  if (existing && labelOf(existing, LABEL_TYPE) === TYPE_CONFIG) {
+    existing.data = {
+      ...(existing.data || {}), enabled: existing.data?.enabled === 'false' ? 'false' : 'true', home: JSON.stringify(home)
+    };
+    await existing.save();
+  } else {
+    const cm = await store.dispatch('management/create', {
+      type:     CONFIGMAP,
+      metadata: {
+        name: CONFIG_NAME, namespace: TEMPLATE_NAMESPACE, labels: configLabels
+      },
+      data: { enabled: 'true', home: JSON.stringify(home) },
+    });
+
+    await cm.save();
+  }
+}
+
+/** Repoint the applied Home (global or per-user) to a Home template name. */
+export async function applyHome(store, scope, name, userId) {
+  const home = safeParse(cmById(store.getters, CONFIG_NAME)?.data?.home, {});
+
+  if (scope === 'user') {
+    if (!userId) {
+      return;
+    }
+    home.users = { ...(home.users || {}), [userId]: name };
+  } else {
+    home.global = name;
+  }
+
+  await persistHome(store, home);
+}
+
+/** Unset the applied Home for a scope (global default, or this user's personal pick). */
+export async function clearHome(store, scope, userId) {
+  const home = safeParse(cmById(store.getters, CONFIG_NAME)?.data?.home, {});
+
+  if (scope === 'user') {
+    if (!userId || !home.users) {
+      return;
+    }
+    delete home.users[userId];
+  } else {
+    delete home.global;
+  }
+
+  await persistHome(store, home);
+}
+
 /**
  * Build the target nav as { group -> items } for the placement UI, using the same type-map getTree
- * the SideNav uses. `product` is PRODUCT_NAME (global) or EXPLORER_PRODUCT; clusterId is the cluster
- * whose explorer nav to read (ignored for the global product). Labels are de-HTML'd for display.
+ * the SideNav uses.
  */
 export function navTreeFor(store, product, clusterId) {
   try {

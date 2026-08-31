@@ -3,8 +3,8 @@ import StockHome from '@shell/pages/home.vue';
 import TemplateCode from '../components/TemplateCode.vue';
 import HomeConfigChat from '../components/HomeConfigChat.vue';
 import {
-  HOME_TEMPLATE, TEMPLATING_CONFIG, TEMPLATE_NAMESPACE, CONFIG_NAME, CONFIG_NAMESPACE, CONFIG_ID,
-  isTemplatingEnabled, appliedHomeTemplateName, homeTemplateSource, savedHomeTemplates
+  isTemplatingEnabled, appliedHomeScopes, homeTemplateSource, savedHomeTemplates,
+  saveHomeTemplate, applyHome, clearHome, fetchTemplatingConfigMaps
 } from '../templating/template-engine';
 
 const STARTER_SFC = `<script>
@@ -30,8 +30,6 @@ export default {
 
   data() {
     return {
-      source:         '',
-      appliedName:    null,
       userId:         null,
       loaded:         false,
       showEditor:     false,
@@ -46,20 +44,20 @@ export default {
     };
   },
 
+  // The applied Home (global + per-user) and the rendered `source` are COMPUTED off the store, so they
+  // stay correct as ConfigMaps load/change — applying, removing or editing a template re-resolves them
+  // reactively (no reload, no stale one-shot state). created() just primes the store and resolves the
+  // current user id.
   async created() {
     for (let attempt = 0; attempt < 20; attempt++) {
       try {
-        await this.$store.dispatch('management/findAll', { type: TEMPLATING_CONFIG });
-        const hts = await this.$store.dispatch('management/findAll', { type: HOME_TEMPLATE });
+        await fetchTemplatingConfigMaps(this.$store);
+
         const user = await this.$store.dispatch('auth/getUser').catch(() => null);
 
         this.userId = user?.id || this.$store.getters['auth/user']?.id || null;
-        this.appliedName = appliedHomeTemplateName(this.$store.getters, this.userId);
 
-        const src = isTemplatingEnabled(this.$store.getters) ? homeTemplateSource(this.$store.getters, this.appliedName) : '';
-
-        if (src || (hts && hts.length) || attempt >= 4) {
-          this.source = src;
+        if (this.templates.length || attempt >= 4) {
           break;
         }
       } catch (e) { /* retry */ }
@@ -86,6 +84,38 @@ export default {
       }));
     },
 
+    // The applied Home template names split by scope + the one THIS user actually sees (user || global).
+    appliedScopes() {
+      return appliedHomeScopes(this.$store.getters, this.userId);
+    },
+
+    appliedGlobalName() {
+      return this.appliedScopes.global;
+    },
+
+    appliedUserName() {
+      return this.appliedScopes.user;
+    },
+
+    appliedName() {
+      return this.appliedScopes.resolved;
+    },
+
+    appliedGlobalDisplay() {
+      return this.displayNameOf(this.appliedGlobalName);
+    },
+
+    appliedUserDisplay() {
+      return this.displayNameOf(this.appliedUserName);
+    },
+
+    // Source rendered when the editor is closed: the applied Home template's SFC (empty when templating
+    // is off or nothing is applied, so the normal render falls back to stock Rancher). TemplateCode
+    // watches this and recompiles, so apply/remove/edit all reflect live.
+    source() {
+      return (this.templatingEnabled && this.appliedName) ? homeTemplateSource(this.$store.getters, this.appliedName) : '';
+    },
+
     previewSource() {
       return this.showEditor ? this.debouncedDraft : this.source;
     },
@@ -98,21 +128,34 @@ export default {
         this.debouncedDraft = val;
       }, 300);
     },
-
-    // When templating is re-enabled live (kill switch), re-resolve the applied Home template so the
-    // templated Home comes straight back without a reload.
-    templatingEnabled(enabled) {
-      if (enabled) {
-        this.appliedName = appliedHomeTemplateName(this.$store.getters, this.userId);
-        this.source = homeTemplateSource(this.$store.getters, this.appliedName);
-      }
-    },
   },
 
   methods: {
     savedCR(name) {
-      return this.$store.getters['management/byId'](HOME_TEMPLATE, `${ TEMPLATE_NAMESPACE }/${ name }`) ||
-        savedHomeTemplates(this.$store.getters).find((h) => h.metadata?.name === name);
+      return savedHomeTemplates(this.$store.getters).find((h) => h.metadata?.name === name);
+    },
+
+    // Friendly display name for a saved template's internal name (falls back to the name itself).
+    displayNameOf(name) {
+      if (!name) {
+        return null;
+      }
+
+      return this.templates.find((t) => t.name === name)?.displayName || name;
+    },
+
+    // How a template is applied, for the picker: your personal Home, the global default, or both.
+    appliedLabel(name) {
+      const tags = [];
+
+      if (name && name === this.appliedUserName) {
+        tags.push('your Home');
+      }
+      if (name && name === this.appliedGlobalName) {
+        tags.push('applied globally');
+      }
+
+      return tags.length ? ` (${ tags.join(', ') })` : '';
     },
 
     toggleEditor() {
@@ -129,6 +172,19 @@ export default {
       this.selectedName = name;
       this.draft = (name && this.savedCR(name)?.spec?.source) || '';
       this.debouncedDraft = this.draft;
+    },
+
+    // The AI wrote the selected Home template ConfigMap — pull the new source into the editor. The
+    // normal-render `source` is computed off the store, so if the edited template is the applied one
+    // it updates on its own.
+    async onAgentApplied() {
+      await fetchTemplatingConfigMaps(this.$store);
+      const src = this.savedCR(this.selectedName)?.spec?.source;
+
+      if (src) {
+        this.draft = src;
+        this.debouncedDraft = src;
+      }
     },
 
     // Drag the divider to resize the editor column (clamped 20–75%). Listeners live on WINDOW, not
@@ -182,14 +238,9 @@ export default {
       try {
         const cr = this.savedCR(this.selectedName);
 
-        if (cr) {
-          cr.spec = { ...(cr.spec || {}), source: this.draft };
-          await cr.save();
-        }
-
-        if (this.selectedName === this.appliedName) {
-          this.source = this.draft;
-        }
+        await saveHomeTemplate(this.$store, {
+          name: this.selectedName, source: this.draft, displayName: cr?.spec?.displayName
+        });
 
         this.applyStatus = 'Saved.';
       } catch (e) {
@@ -211,32 +262,38 @@ export default {
       this.saveError = '';
 
       try {
-        const existing = this.$store.getters['management/byId'](TEMPLATING_CONFIG, CONFIG_ID);
-        const home = { ...(existing?.spec?.home || {}) };
+        await applyHome(this.$store, scope, this.selectedName, this.userId);
+        // Force-refresh the config ConfigMap so the applied/source computeds re-resolve — closing the
+        // editor then shows the just-applied template (and marks it) live, no reload needed.
+        await fetchTemplatingConfigMaps(this.$store);
 
-        if (scope === 'user') {
-          home.users = { ...(home.users || {}), [key]: this.selectedName };
-        } else {
-          home.global = this.selectedName;
-        }
-
-        if (existing) {
-          existing.spec = {
-            ...(existing.spec || {}), enabled: existing.spec?.enabled !== false, home
-          };
-          await existing.save();
-        } else {
-          const cr = await this.$store.dispatch('management/create', {
-            type:     TEMPLATING_CONFIG,
-            metadata: { name: CONFIG_NAME, namespace: CONFIG_NAMESPACE },
-            spec:     { enabled: true, home },
-          });
-
-          await cr.save();
-        }
-
-        this.appliedName = appliedHomeTemplateName(this.$store.getters, this.userId);
         this.applyStatus = scope === 'user' ? 'Applied to your user.' : 'Applied globally.';
+      } catch (e) {
+        this.saveError = e?.message || String(e);
+      } finally {
+        this.saving = false;
+      }
+    },
+
+    // Unset the applied Home for a scope. Removing the global default (with no personal pick) reverts
+    // everyone to stock Rancher; removing your personal Home falls back to the global default — both
+    // live (computeds re-resolve off the refreshed store), with no reload.
+    async removeApply(scope) {
+      const current = scope === 'user' ? this.appliedUserName : this.appliedGlobalName;
+
+      if (!current || (scope === 'user' && !this.userId)) {
+        return;
+      }
+
+      this.saving = true;
+      this.saveError = '';
+      this.applyStatus = '';
+
+      try {
+        await clearHome(this.$store, scope, this.userId);
+        await fetchTemplatingConfigMaps(this.$store);
+
+        this.applyStatus = scope === 'user' ? 'Removed your personal Home.' : 'Removed the global Home.';
       } catch (e) {
         this.saveError = e?.message || String(e);
       } finally {
@@ -258,14 +315,10 @@ export default {
       this.saveError = '';
 
       try {
-        const cr = await this.$store.dispatch('management/create', {
-          type:     HOME_TEMPLATE,
-          metadata: { name: slug, namespace: TEMPLATE_NAMESPACE },
-          spec:     { displayName: label, source: STARTER_SFC },
+        await saveHomeTemplate(this.$store, {
+          name: slug, source: STARTER_SFC, displayName: label
         });
-
-        await cr.save();
-        await this.$store.dispatch('management/findAll', { type: HOME_TEMPLATE, opt: { force: true } });
+        await fetchTemplatingConfigMaps(this.$store);
         this.selectSaved(slug);
         this.applyStatus = `Created "${ label }".`;
       } catch (e) {
@@ -307,7 +360,7 @@ export default {
             :key="t.name"
             :value="t.name"
           >
-            {{ t.displayName }}{{ t.name === appliedName ? ' (applied)' : '' }}
+            {{ t.displayName }}{{ appliedLabel(t.name) }}
           </option>
         </select>
         <button
@@ -325,22 +378,58 @@ export default {
           {{ saving ? 'Saving…' : 'Save' }}
         </button>
         <span class="ai-home__sep" />
-        <button
-          class="btn btn-sm role-secondary"
-          :disabled="saving"
-          title="Make this template the Home page everyone sees by default"
-          @click="applyTo('global')"
-        >
-          Apply to Global
-        </button>
-        <button
-          class="btn btn-sm role-secondary"
-          :disabled="saving || !userId"
-          title="Make this template your personal Home page"
-          @click="applyTo('user')"
-        >
-          Apply to My User
-        </button>
+        <div class="ai-home__applies">
+          <div class="ai-home__apply-row">
+            <span class="ai-home__scope">Global</span>
+            <span
+              class="ai-home__applied-name"
+              :class="{ 'ai-home__applied-name--empty': !appliedGlobalName }"
+              :title="appliedGlobalName ? 'The Home everyone sees by default' : 'No global Home — everyone sees stock Rancher'"
+            >{{ appliedGlobalDisplay || 'none' }}</span>
+            <button
+              class="btn btn-sm role-secondary"
+              :disabled="saving || !selectedName"
+              title="Make the selected (Editing) template the Home everyone sees by default"
+              @click="applyTo('global')"
+            >
+              Apply selected
+            </button>
+            <button
+              v-if="appliedGlobalName"
+              class="btn btn-sm role-link"
+              :disabled="saving"
+              title="Remove the global Home (revert everyone to stock Rancher)"
+              @click="removeApply('global')"
+            >
+              Remove
+            </button>
+          </div>
+          <div class="ai-home__apply-row">
+            <span class="ai-home__scope">Your Home</span>
+            <span
+              class="ai-home__applied-name"
+              :class="{ 'ai-home__applied-name--empty': !appliedUserName }"
+              :title="appliedUserName ? 'Your personal Home (overrides the global default)' : 'No personal Home — you see the global default'"
+            >{{ appliedUserDisplay || 'none' }}</span>
+            <button
+              class="btn btn-sm role-secondary"
+              :disabled="saving || !userId || !selectedName"
+              title="Make the selected (Editing) template your personal Home page"
+              @click="applyTo('user')"
+            >
+              Apply selected
+            </button>
+            <button
+              v-if="appliedUserName"
+              class="btn btn-sm role-link"
+              :disabled="saving"
+              title="Remove your personal Home (fall back to the global default)"
+              @click="removeApply('user')"
+            >
+              Remove
+            </button>
+          </div>
+        </div>
         <span
           v-if="applyStatus"
           class="text-success ml-10"
@@ -368,7 +457,10 @@ export default {
           spellcheck="false"
         />
         <div class="ai-home__chat">
-          <HomeConfigChat :config-map-name="selectedName" />
+          <HomeConfigChat
+            :config-map-name="selectedName"
+            @applied="onAgentApplied"
+          />
         </div>
       </div>
       <div
@@ -444,6 +536,42 @@ export default {
     height:     22px;
     background: var(--border);
     margin:     0 4px;
+  }
+
+  &__applies {
+    display:        flex;
+    flex-direction: column;
+    gap:            4px;
+  }
+
+  &__apply-row {
+    display:     flex;
+    align-items: center;
+    gap:         6px;
+  }
+
+  &__scope {
+    min-width:      68px;
+    color:          var(--muted);
+    font-size:      11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  &__applied-name {
+    min-width:     120px;
+    padding:       2px 8px;
+    border:        1px solid var(--border);
+    border-radius: var(--border-radius);
+    background:    var(--body-bg);
+    font-weight:   600;
+    font-size:     12px;
+
+    &--empty {
+      color:       var(--muted);
+      font-weight: 400;
+      font-style:  italic;
+    }
   }
 
   &__split {

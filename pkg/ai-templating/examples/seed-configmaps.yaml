@@ -1,0 +1,47 @@
+# Seed ConfigMaps the extension auto-installs (see install/ensure.ts) so a fresh install has a
+# working custom Home out of the box: the config singleton (kill switch + applied-Home pointer)
+# and one default Home template it points at.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: templating-config
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: "true"
+    templates.rancher.io/type: config
+data:
+  enabled: "true"
+  home: '{"global":"home"}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: home
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: "true"
+    templates.rancher.io/type: home-template
+data:
+  displayName: Home
+  view.vue: |
+    <script>
+    import ResourceTable from '@shell/components/ResourceTable';
+    import { Banner } from '@components/Banner';
+    export default {
+      components: { ResourceTable, Banner },
+      created() {
+        this.$store.dispatch('management/findAll', { type: 'management.cattle.io.cluster' })
+          .then((rows) => { this.rows = rows || []; }).catch(() => { this.rows = []; });
+      },
+      data() { return { rows: [] }; },
+      computed: { schema() { return this.$store.getters['management/schemaFor']('management.cattle.io.cluster'); } },
+    };
+    </script>
+    <template>
+      <div style="padding: 24px">
+        <Banner color="info" label="Welcome — this Home page is built with the AI Templating extension." />
+        <h1 class="mt-20 mb-20">Your clusters</h1>
+        <ResourceTable v-if="schema" :schema="schema" :rows="rows" :table-actions="false" :row-actions="false" />
+      </div>
+    </template>

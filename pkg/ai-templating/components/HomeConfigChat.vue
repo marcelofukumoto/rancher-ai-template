@@ -17,7 +17,7 @@ const WS_PATH = 'v1/ws/messages';
 // (shell/config/templating/home-editor-config.aiagentconfig.yaml), the single source of truth.
 // __CM_NAME__ is replaced with the ConfigMap the editor is currently editing.
 const HOME_EDITOR_TARGET =
-`For this request, edit ONLY the HomeTemplate custom resource (apiVersion templating.rancher.io/v1alpha1, kind HomeTemplate) named "__CM_NAME__" in namespace "default". Put the full Vue SFC in its spec.source. Do not edit any other resource.
+`For this request, edit ONLY the ConfigMap named "__CM_NAME__" in namespace "default" (it carries the label templates.rancher.io/ai-templating=true). Put the full Vue SFC into its data key "view.vue" (data['view.vue']). Do NOT change any other data key, the labels, or any other resource. Load the ConfigMap first, then write it back (update/patch).
 
 `;
 
@@ -64,6 +64,8 @@ export default {
       default: 'Home Editor',
     },
   },
+
+  emits: ['applied'],
 
   data() {
     return {
@@ -152,6 +154,11 @@ export default {
         this.inMessage = false;
         this.assistant.completed = true;
         this.streaming = false;
+
+        // A resource write ran this turn — tell the editor so it can pull the new source into view.
+        if (this.assistant.tool) {
+          this.$emit('applied');
+        }
 
         return;
       case T.thinkStart:

@@ -3,8 +3,8 @@ import TemplateCode from '../components/TemplateCode.vue';
 import HomeConfigChat from '../components/HomeConfigChat.vue';
 import PlacementTree from '../components/PlacementTree.vue';
 import {
-  CUSTOM_VIEW, TEMPLATE_NAMESPACE, BLANK_CANVAS_NAME, CLUSTER_CANVAS_NAME, PRODUCT_NAME, EXPLORER_PRODUCT,
-  allCustomViews, saveCustomView
+  BLANK_CANVAS_NAME, CLUSTER_CANVAS_NAME, PRODUCT_NAME, EXPLORER_PRODUCT,
+  allCustomViews, customViewByName, saveCustomView, fetchTemplatingConfigMaps
 } from '../templating/template-engine';
 
 const MGMT_CLUSTER = 'management.cattle.io.cluster';
@@ -53,7 +53,7 @@ export default {
 // (with an AI chat), choose its type (Global vs Cluster) and where it shows via a drag-and-drop
 // placement tree, then Save back to the CR. The `blank-canvas` CR is just the default scratch doc.
 const CANVAS_PREAMBLE =
-`For this request, edit ONLY the CustomView custom resource (apiVersion templating.rancher.io/v1alpha1, kind CustomView) named "__CM_NAME__" in namespace "default". Keep spec.kind as "code" and put the full Vue SFC in spec.source. Do not edit any other resource.
+`For this request, edit ONLY the ConfigMap named "__CM_NAME__" in namespace "default" (it carries the label templates.rancher.io/ai-templating=true). Put the full Vue SFC into its data key "view.vue" (data['view.vue']). Do NOT change any other data key, the labels, or any other resource. Load the ConfigMap first, then write it back (update/patch).
 
 `;
 
@@ -92,7 +92,7 @@ export default {
     // Load custom views + the cluster list (for the preview picker), retrying until schemas exist.
     for (let attempt = 0; attempt < 20; attempt++) {
       try {
-        await this.$store.dispatch('management/findAll', { type: CUSTOM_VIEW });
+        await fetchTemplatingConfigMaps(this.$store);
         await this.$store.dispatch('management/findAll', { type: MGMT_CLUSTER }).catch(() => {});
 
         if (this.views.length || attempt >= 4) {
@@ -101,6 +101,16 @@ export default {
       } catch (e) { /* retry */ }
 
       await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    // Deep-link from the Templates list: ?view=<name> opens straight into that view.
+    const requested = this.$route?.query?.view;
+
+    if (requested && this.crByName(requested)) {
+      this.selectView(requested);
+      this.loaded = true;
+
+      return;
     }
 
     // Inside a cluster, default to the cluster scratch (cluster type, previews live data); on the
@@ -192,8 +202,19 @@ export default {
 
   methods: {
     crByName(name) {
-      return this.$store.getters['management/byId'](CUSTOM_VIEW, `${ TEMPLATE_NAMESPACE }/${ name }`) ||
+      return customViewByName(this.$store.getters, name) ||
         this.views.find((c) => c.metadata?.name === name);
+    },
+
+    // The AI wrote the target ConfigMap — re-fetch and pull the new source into the editor + preview.
+    async onAgentApplied() {
+      await fetchTemplatingConfigMaps(this.$store);
+      const src = this.crByName(this.selectedName)?.spec?.source;
+
+      if (src) {
+        this.draft = src;
+        this.debouncedDraft = src;
+      }
     },
 
     selectView(name) {
@@ -300,7 +321,7 @@ export default {
           itemWeight: typeof this.placement.itemWeight === 'number' ? this.placement.itemWeight : undefined,
         });
 
-        await this.$store.dispatch('management/findAll', { type: CUSTOM_VIEW, opt: { force: true } });
+        await fetchTemplatingConfigMaps(this.$store);
         this.isNew = false;
         this.status = this.scope === 'cluster' ? 'Saved — added to the cluster navbar.' : 'Saved — added to the AI Templating nav.';
       } catch (e) {
@@ -483,10 +504,11 @@ export default {
         />
         <div class="ai-canvas__chat">
           <HomeConfigChat
-            agent="template-custom-view-code-builder"
+            agent="template-blank-canvas-builder"
             persona-label="Custom View Builder"
             :preamble="canvasPreamble"
             :config-map-name="selectedName"
+            @applied="onAgentApplied"
           />
         </div>
       </div>

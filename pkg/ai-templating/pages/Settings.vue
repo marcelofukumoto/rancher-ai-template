@@ -1,17 +1,16 @@
 <script>
 import { Checkbox } from '@components/Form/Checkbox';
-import { TEMPLATING_CONFIG, CONFIG_ID, isTemplatingEnabled, toggleTemplating } from '../templating/template-engine';
+import { isTemplatingEnabled, toggleTemplating, fetchTemplatingConfigMaps } from '../templating/template-engine';
 
 // AI Templating settings — the global kill switch. Always reachable (even when off) so the
-// feature can be turned back on. The CR lists (Custom Views / Home Templates) are standard
-// Rancher resource lists registered by the product.
+// feature can be turned back on. Templates are stored as labeled ConfigMaps and authored in the
+// Blank Canvas / Home editors.
 export default {
   name:       'AiTemplatingSettings',
   components: { Checkbox },
 
-  async fetch() {
-    await this.$store.dispatch('management/find', { type: TEMPLATING_CONFIG, id: CONFIG_ID })
-      .catch(() => {});
+  async created() {
+    await fetchTemplatingConfigMaps(this.$store).catch(() => {});
   },
 
   data() {
@@ -57,9 +56,8 @@ export default {
       AI Templating
     </h1>
     <p class="text-muted mb-20">
-      Custom views, Home templates and the applied Home are defined by
-      <code>templating.rancher.io</code> resources — see <b>Custom Views</b> and
-      <b>Home Templates</b> in the nav.
+      Custom views and Home templates are stored as labeled <code>ConfigMap</code>s and authored in
+      the <b>Blank Canvas</b> and <b>Home</b> editors (with the AI assistant).
     </p>
 
     <div
@@ -73,7 +71,7 @@ export default {
         @update:value="onToggle"
       />
       <p class="text-muted mt-5 mb-0">
-        When off, Rancher ignores every CustomView / HomeTemplate and behaves like stock Rancher.
+        When off, Rancher ignores every custom view and Home template and behaves like stock Rancher.
         This page stays available so you can turn it back on.
       </p>
     </div>

@@ -1,0 +1,353 @@
+# persona-examples — labeled ConfigMaps (AI Templating storage).
+#   kubectl apply -f persona-examples.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: home-cluster-admin
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: home-template
+data:
+  displayName: Cluster Admin — Fleet Health
+  view.vue: |
+    <script>
+    import ResourceTable from '@shell/components/ResourceTable';
+    import { Banner } from '@components/Banner';
+    export default {
+      components: { ResourceTable, Banner },
+      created() {
+        this.$store.dispatch('management/findAll', { type: 'management.cattle.io.cluster' })
+          .then((rows) => { this.rows = rows || []; })
+          .catch(() => { this.rows = []; });
+      },
+      data() { return { rows: [] }; },
+      computed: {
+        schema() { return this.$store.getters['management/schemaFor']('management.cattle.io.cluster'); },
+        total() { return this.rows.length; },
+        notReady() { return this.rows.filter((c) => c.metadata && c.metadata.state && c.metadata.state.name !== 'active').length; },
+      },
+    };
+    </script>
+    <template>
+      <div class="ca-home">
+        <h1 class="mb-20">Fleet Health</h1>
+        <Banner
+          :color="notReady ? 'warning' : 'success'"
+          :label="notReady ? (notReady + ' of ' + total + ' clusters need attention') : ('All ' + total + ' clusters are active')"
+        />
+        <ResourceTable v-if="schema" :schema="schema" :rows="rows" :table-actions="false" :row-actions="false" />
+      </div>
+    </template>
+    <style scoped>.ca-home { padding: 24px; }</style>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: home-app-developer
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: home-template
+data:
+  displayName: App Developer — App Launcher
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    import { Card } from '@components/Card';
+    import { RcButton } from '@components/RcButton';
+    export default {
+      components: { Banner, Card, RcButton },
+      created() {
+        this.$store.dispatch('management/findAll', { type: 'management.cattle.io.cluster' })
+          .then((rows) => { this.rows = rows || []; })
+          .catch(() => { this.rows = []; });
+      },
+      data() { return { rows: [] }; },
+      methods: {
+        workloadsLink(c) {
+          return { name: 'c-cluster-explorer-workload-dashboard', params: { cluster: c.id } };
+        },
+      },
+    };
+    </script>
+    <template>
+      <div class="app-home">
+        <h1 class="mb-20">Your Apps</h1>
+        <Banner color="info" label="Jump straight into the workloads of any cluster." />
+        <div class="grid">
+          <Card
+            v-for="c in rows"
+            :key="c.id"
+            class="app-card"
+            :show-highlight-border="false"
+            :show-actions="false"
+          >
+            <template #title>
+              <span class="app-card__name">{{ c.nameDisplay || c.metadata.name }}</span>
+            </template>
+            <template #body>
+              <RcButton variant="primary" :to="workloadsLink(c)">Workloads →</RcButton>
+            </template>
+          </Card>
+        </div>
+      </div>
+    </template>
+    <style scoped>
+      .app-home { padding: 24px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 16px; }
+      .app-card__name { font-weight: 600; }
+    </style>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-workloads
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import ResourceTable from '@shell/components/ResourceTable';
+    import { Banner } from '@components/Banner';
+    export default {
+      components: { ResourceTable, Banner },
+      created() {
+        this.$store.dispatch('cluster/findAll', { type: 'apps.deployment' })
+          .then((rows) => { this.rows = rows || []; })
+          .catch(() => { this.rows = []; });
+      },
+      data() { return { rows: [] }; },
+      computed: {
+        schema() { return this.$store.getters['cluster/schemaFor']('apps.deployment'); },
+        ready() { return this.rows.filter((d) => (d.status && d.status.availableReplicas) === (d.spec && d.spec.replicas)).length; },
+      },
+    };
+    </script>
+    <template>
+      <div style="padding: 16px">
+        <h1 class="mb-20">My Workloads</h1>
+        <Banner color="info" :label="ready + ' / ' + rows.length + ' deployments fully available.'" />
+        <ResourceTable v-if="schema" :schema="schema" :rows="rows" :table-actions="false" :row-actions="false" />
+      </div>
+    </template>
+  meta: '{"id":"app-workloads","name":"My Workloads","icon":"list-flat"}'
+  nav: '{"scope":"cluster","group":"my-apps","groupLabel":"My Apps","weight":97}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: portable-bundle
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import ResourceTable from '@shell/components/ResourceTable';
+    import { Banner } from '@components/Banner';
+    import { Card } from '@components/Card';
+    export default {
+      components: { ResourceTable, Banner, Card },
+      created() {
+        const load = (type, key) => this.$store.dispatch('cluster/findAll', { type })
+          .then((r) => { this[key] = r || []; }).catch(() => { this[key] = []; });
+        load('apps.deployment', 'deployments');
+        load('service', 'services');
+        load('networking.k8s.io.ingress', 'ingresses');
+        load('configmap', 'configmaps');
+      },
+      data() { return { deployments: [], services: [], ingresses: [], configmaps: [] }; },
+      computed: {
+        depSchema() { return this.$store.getters['cluster/schemaFor']('apps.deployment'); },
+        svcSchema() { return this.$store.getters['cluster/schemaFor']('service'); },
+        ingSchema() { return this.$store.getters['cluster/schemaFor']('networking.k8s.io.ingress'); },
+        cmSchema() { return this.$store.getters['cluster/schemaFor']('configmap'); },
+      },
+    };
+    </script>
+    <template>
+      <div style="padding: 16px">
+        <h1 class="mb-20">Portable App Bundle</h1>
+        <Banner color="info" label="The cloud-portable pieces of your app in one place — move these and the app moves with you." />
+        <Card class="section" :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">Deployments</h3></template>
+          <template #body>
+            <ResourceTable v-if="depSchema" :schema="depSchema" :rows="deployments" :table-actions="false" :row-actions="false" />
+          </template>
+        </Card>
+        <Card class="section" :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">Services</h3></template>
+          <template #body>
+            <ResourceTable v-if="svcSchema" :schema="svcSchema" :rows="services" :table-actions="false" :row-actions="false" />
+          </template>
+        </Card>
+        <Card class="section" :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">Ingresses</h3></template>
+          <template #body>
+            <ResourceTable v-if="ingSchema" :schema="ingSchema" :rows="ingresses" :table-actions="false" :row-actions="false" />
+          </template>
+        </Card>
+        <Card class="section" :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">ConfigMaps</h3></template>
+          <template #body>
+            <ResourceTable v-if="cmSchema" :schema="cmSchema" :rows="configmaps" :table-actions="false" :row-actions="false" />
+          </template>
+        </Card>
+      </div>
+    </template>
+    <style scoped>.section { margin-bottom: 16px; }</style>
+  meta: '{"id":"portable-bundle","name":"Portable Bundle","icon":"globe"}'
+  nav: '{"scope":"cluster","group":"my-apps","groupLabel":"My Apps","weight":97}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-capacity
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import ResourceTable from '@shell/components/ResourceTable';
+    import { Banner } from '@components/Banner';
+    export default {
+      components: { ResourceTable, Banner },
+      created() {
+        this.$store.dispatch('cluster/findAll', { type: 'node' })
+          .then((rows) => { this.rows = rows || []; })
+          .catch(() => { this.rows = []; });
+      },
+      data() { return { rows: [] }; },
+      computed: { schema() { return this.$store.getters['cluster/schemaFor']('node'); } },
+    };
+    </script>
+    <template>
+      <div style="padding: 16px">
+        <h1 class="mb-20">Node Capacity</h1>
+        <Banner color="info" :label="'CPU, memory and pod headroom across ' + rows.length + ' node(s).'" />
+        <ResourceTable v-if="schema" :schema="schema" :rows="rows" :table-actions="false" :row-actions="false" />
+      </div>
+    </template>
+  meta: '{"id":"node-capacity","name":"Node Capacity","icon":"dashboard"}'
+  nav: '{"scope":"cluster","group":"ops","groupLabel":"Ops","weight":96}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-access
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import ResourceTable from '@shell/components/ResourceTable';
+    import { Banner } from '@components/Banner';
+    export default {
+      components: { ResourceTable, Banner },
+      created() {
+        this.$store.dispatch('cluster/findAll', { type: 'service' })
+          .then((rows) => { this.rows = (rows || []).filter((s) => s.spec && s.spec.type !== 'ClusterIP'); })
+          .catch(() => { this.rows = []; });
+      },
+      data() { return { rows: [] }; },
+      computed: { schema() { return this.$store.getters['cluster/schemaFor']('service'); } },
+    };
+    </script>
+    <template>
+      <div style="padding: 16px">
+        <h1 class="mb-20">Service Access</h1>
+        <Banner color="info" label="NodePort & LoadBalancer services you can reach from your host — the fast local loop." />
+        <ResourceTable v-if="schema" :schema="schema" :rows="rows" :table-actions="false" :row-actions="false" />
+      </div>
+    </template>
+  meta: '{"id":"service-access","name":"Service Access","icon":"network"}'
+  nav: '{"scope":"cluster","group":"ops","groupLabel":"Ops","weight":96}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fleet-overview
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import ResourceTable from '@shell/components/ResourceTable';
+    import { Banner } from '@components/Banner';
+    export default {
+      components: { ResourceTable, Banner },
+      created() {
+        this.$store.dispatch('management/findAll', { type: 'management.cattle.io.cluster' })
+          .then((rows) => { this.rows = rows || []; })
+          .catch(() => { this.rows = []; });
+      },
+      data() { return { rows: [] }; },
+      computed: { schema() { return this.$store.getters['management/schemaFor']('management.cattle.io.cluster'); } },
+    };
+    </script>
+    <template>
+      <div style="padding: 16px">
+        <h1 class="mb-20">Fleet Overview</h1>
+        <Banner color="info" :label="'Managing ' + rows.length + ' cluster(s) across the fleet.'" />
+        <ResourceTable v-if="schema" :schema="schema" :rows="rows" :table-actions="false" :row-actions="false" />
+      </div>
+    </template>
+  meta: '{"id":"fleet-overview","name":"Fleet Overview","icon":"cluster"}'
+  nav: '{"groupLabel":"Admin","group":"admin","weight":90}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harvester-vms
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import ResourceTable from '@shell/components/ResourceTable';
+    import { Banner } from '@components/Banner';
+    const VM = 'kubevirt.io.virtualmachine';
+    export default {
+      components: { ResourceTable, Banner },
+      created() {
+        if (!this.schema) { return; }
+        this.$store.dispatch('cluster/findAll', { type: VM })
+          .then((rows) => { this.rows = rows || []; })
+          .catch(() => { this.rows = []; });
+      },
+      data() { return { rows: [] }; },
+      computed: { schema() { return this.$store.getters['cluster/schemaFor'](VM); } },
+    };
+    </script>
+    <template>
+      <div style="padding: 16px">
+        <h1 class="mb-20">Virtual Machines</h1>
+        <Banner
+          v-if="!schema"
+          color="warning"
+          label="This view needs a Harvester cluster (the kubevirt VirtualMachine CRD isn't present here)."
+        />
+        <ResourceTable v-else :schema="schema" :rows="rows" :table-actions="false" :row-actions="false" />
+      </div>
+    </template>
+  meta: '{"id":"harvester-vms","name":"Virtual Machines","icon":"compass"}'
+  nav: '{"scope":"cluster","group":"root","weight":88}'

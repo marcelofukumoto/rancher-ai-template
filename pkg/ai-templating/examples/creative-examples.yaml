@@ -1,0 +1,885 @@
+# creative-examples — labeled ConfigMaps (AI Templating storage).
+#   kubectl apply -f creative-examples.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-vitals
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    import { Card } from '@components/Card';
+    const PHASES = [
+      { key: 'Running',   color: '#3fb950' },
+      { key: 'Pending',   color: '#d29922' },
+      { key: 'Failed',    color: '#f85149' },
+      { key: 'Succeeded', color: '#58a6ff' },
+      { key: 'Other',     color: '#8b949e' },
+    ];
+    export default {
+      components: { Banner, Card },
+      created() {
+        this.$store.dispatch('cluster/findAll', { type: 'pod' })
+          .then((rows) => { this.pods = rows || []; }).catch(() => { this.pods = []; });
+        this.$store.dispatch('cluster/findAll', { type: 'node' })
+          .then((rows) => { this.nodes = rows || []; }).catch(() => { this.nodes = []; });
+      },
+      data() { return { pods: [], nodes: [], phaseDefs: PHASES }; },
+      computed: {
+        counts() {
+          const c = { Running: 0, Pending: 0, Failed: 0, Succeeded: 0, Other: 0 };
+          this.pods.forEach((p) => {
+            const ph = (p.status && p.status.phase) || 'Other';
+            if (c[ph] === undefined) { c.Other += 1; } else { c[ph] += 1; }
+          });
+          return c;
+        },
+        total() { return this.pods.length || 0; },
+        segments() {
+          const total = this.total || 1;
+          let cum = 0;
+          const segs = [];
+          this.phaseDefs.forEach((ph) => {
+            const pct = (this.counts[ph.key] / total) * 100;
+            if (pct <= 0) { return; }
+            segs.push({ key: ph.key, color: ph.color, dash: pct.toFixed(2) + ' ' + (100 - pct).toFixed(2), offset: (25 - cum).toFixed(2) });
+            cum += pct;
+          });
+          return segs;
+        },
+        nodesReady() {
+          return this.nodes.filter((n) => ((n.status && n.status.conditions) || []).some((c) => c.type === 'Ready' && c.status === 'True')).length;
+        },
+        dots() {
+          const color = (p) => {
+            const ph = (p.status && p.status.phase) || 'Other';
+            const def = this.phaseDefs.find((d) => d.key === ph);
+            return (def && def.color) || '#8b949e';
+          };
+          return this.pods.map((p) => ({ id: p.id, title: p.metadata.namespace + '/' + p.metadata.name + ' — ' + ((p.status && p.status.phase) || '?'), color: color(p) }));
+        },
+      },
+    };
+    </script>
+    <template>
+      <div class="vitals">
+        <h1 class="mb-20">Cluster Vitals</h1>
+        <Banner color="info" :label="'Live view of ' + total + ' pods across ' + nodesReady + ' / ' + nodes.length + ' ready node(s).'" />
+
+        <Card class="viz" :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">Pod phase breakdown</h3></template>
+          <template #body>
+            <div class="vitals__top">
+              <div class="donut">
+                <svg viewBox="0 0 42 42" class="donut__svg">
+                  <circle class="donut__hole" cx="21" cy="21" r="15.9155" />
+                  <circle
+                    v-for="s in segments"
+                    :key="s.key"
+                    class="donut__seg"
+                    cx="21"
+                    cy="21"
+                    r="15.9155"
+                    :stroke="s.color"
+                    :stroke-dasharray="s.dash"
+                    :stroke-dashoffset="s.offset"
+                  />
+                  <text x="21" y="20" class="donut__num">{{ total }}</text>
+                  <text x="21" y="26" class="donut__cap">pods</text>
+                </svg>
+                <div class="legend">
+                  <div v-for="p in phaseDefs" :key="p.key" v-show="counts[p.key]" class="legend__row">
+                    <span class="legend__dot" :style="{ background: p.color }" />
+                    {{ p.key }} <b>{{ counts[p.key] }}</b>
+                  </div>
+                </div>
+              </div>
+
+              <div class="tiles">
+                <div class="tile"><div class="tile__n">{{ counts.Running }}</div><div class="tile__l">Running</div></div>
+                <div class="tile" :class="counts.Pending ? 'tile--warn' : ''"><div class="tile__n">{{ counts.Pending }}</div><div class="tile__l">Pending</div></div>
+                <div class="tile" :class="counts.Failed ? 'tile--bad' : ''"><div class="tile__n">{{ counts.Failed }}</div><div class="tile__l">Failed</div></div>
+                <div class="tile"><div class="tile__n">{{ nodesReady }}/{{ nodes.length }}</div><div class="tile__l">Nodes ready</div></div>
+              </div>
+            </div>
+          </template>
+        </Card>
+
+        <Card class="viz" :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">Pulse — every pod, coloured by phase</h3></template>
+          <template #body>
+            <div class="pulse">
+              <span v-for="d in dots" :key="d.id" class="pulse__dot" :style="{ background: d.color }" :title="d.title" />
+            </div>
+          </template>
+        </Card>
+      </div>
+    </template>
+    <style scoped>
+      .vitals { padding: 20px; }
+      .viz { margin-bottom: 16px; }
+      .vitals__top { display: flex; gap: 32px; flex-wrap: wrap; align-items: center; }
+      .donut { display: flex; align-items: center; gap: 18px; }
+      .donut__svg { width: 160px; height: 160px; transform: rotate(-90deg); }
+      .donut__hole { fill: transparent; stroke: var(--border); stroke-width: 4; }
+      .donut__seg { fill: transparent; stroke-width: 4; }
+      .donut__num { transform: rotate(90deg); transform-origin: 21px 21px; font-size: 8px; font-weight: 700; text-anchor: middle; fill: var(--body-text); }
+      .donut__cap { transform: rotate(90deg); transform-origin: 21px 21px; font-size: 3px; text-anchor: middle; fill: var(--muted); }
+      .legend__row { font-size: 13px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+      .legend__dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+      .tiles { display: flex; gap: 12px; flex-wrap: wrap; }
+      .tile { min-width: 96px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--box-bg); }
+      .tile--warn { border-color: #d29922; }
+      .tile--bad { border-color: #f85149; }
+      .tile__n { font-size: 28px; font-weight: 700; }
+      .tile__l { color: var(--muted); font-size: 12px; }
+      .pulse { display: grid; grid-template-columns: repeat(auto-fill, 14px); gap: 4px; }
+      .pulse__dot { width: 14px; height: 14px; border-radius: 3px; cursor: default; }
+    </style>
+  meta: '{"id":"cluster-vitals","name":"Cluster Vitals","icon":"dashboard"}'
+  nav: '{"scope":"cluster","group":"dashboards","groupLabel":"Dashboards","weight":95}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: deploy-control
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    import { Card } from '@components/Card';
+    import { RcButton } from '@components/RcButton';
+    export default {
+      components: { Banner, Card, RcButton },
+      created() {
+        this.$store.dispatch('cluster/findAll', { type: 'apps.deployment' })
+          .then((rows) => { this.rows = rows || []; }).catch(() => { this.rows = []; });
+      },
+      data() { return { rows: [], busy: {} }; },
+      methods: {
+        replicas(d) { return (d.spec && d.spec.replicas) || 0; },
+        ready(d) { return (d.status && d.status.availableReplicas) || 0; },
+        pct(d) { const r = this.replicas(d); return r ? Math.min(100, (this.ready(d) / r) * 100) : 0; },
+        async scale(d, delta) {
+          const next = Math.max(0, this.replicas(d) + delta);
+          this.busy = { ...this.busy, [d.id]: true };
+          try { d.spec.replicas = next; await d.save(); } catch (e) { /* ignore */ }
+          this.busy = { ...this.busy, [d.id]: false };
+        },
+      },
+    };
+    </script>
+    <template>
+      <div class="cp">
+        <h1 class="mb-20">Deployment Control Panel</h1>
+        <Banner color="info" label="Scale deployments right here — no YAML, no kubectl." />
+        <Card :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">Deployments</h3></template>
+          <template #body>
+            <div class="cp__row cp__row--head">
+              <div>Deployment</div><div>Availability</div><div>Scale</div>
+            </div>
+            <div v-for="d in rows" :key="d.id" class="cp__row">
+              <div class="cp__name">
+                <div class="cp__title">{{ d.metadata.name }}</div>
+                <div class="cp__ns text-muted">{{ d.metadata.namespace }}</div>
+              </div>
+              <div class="cp__avail">
+                <div class="cp__bar"><div class="cp__fill" :style="{ width: pct(d) + '%' }" /></div>
+                <span class="cp__count" :class="{ ok: ready(d) === replicas(d) }">{{ ready(d) }} / {{ replicas(d) }}</span>
+              </div>
+              <div class="cp__actions">
+                <RcButton variant="secondary" :disabled="busy[d.id] || replicas(d) === 0" @click="scale(d, -1)">−</RcButton>
+                <RcButton variant="primary" :disabled="busy[d.id]" @click="scale(d, 1)">+</RcButton>
+              </div>
+            </div>
+          </template>
+        </Card>
+      </div>
+    </template>
+    <style scoped>
+      .cp { padding: 16px; }
+      .cp__row { display: grid; grid-template-columns: 2fr 2fr auto; gap: 16px; align-items: center; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+      .cp__row--head { color: var(--muted); font-size: 12px; text-transform: uppercase; border-bottom: 2px solid var(--border); }
+      .cp__title { font-weight: 600; }
+      .cp__ns { font-size: 12px; }
+      .cp__avail { display: flex; align-items: center; gap: 10px; }
+      .cp__bar { flex: 1; height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
+      .cp__fill { height: 100%; background: #3fb950; }
+      .cp__count.ok { color: #3fb950; font-weight: 600; }
+      .cp__actions { display: flex; gap: 6px; }
+    </style>
+  meta: '{"id":"deploy-control","name":"Control Panel","icon":"list-flat"}'
+  nav: '{"scope":"cluster","group":"my-apps","groupLabel":"My Apps","weight":97}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: namespace-heatmap
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    import { Card } from '@components/Card';
+    export default {
+      components: { Banner, Card },
+      created() {
+        this.$store.dispatch('cluster/findAll', { type: 'pod' })
+          .then((rows) => { this.pods = rows || []; }).catch(() => { this.pods = []; });
+      },
+      data() { return { pods: [] }; },
+      computed: {
+        tiles() {
+          const by = {};
+          this.pods.forEach((p) => { const ns = p.metadata.namespace; by[ns] = (by[ns] || 0) + 1; });
+          return Object.keys(by).map((ns) => ({ ns, count: by[ns] })).sort((a, b) => b.count - a.count);
+        },
+        max() { return this.tiles.reduce((m, t) => Math.max(m, t.count), 1); },
+      },
+      methods: {
+        heat(count) {
+          const r = count / this.max;
+          const hue = 140 - Math.round(r * 140);
+          return { background: 'hsl(' + hue + ', 62%, 42%)' };
+        },
+      },
+    };
+    </script>
+    <template>
+      <div class="hm">
+        <h1 class="mb-20">Namespace Heatmap</h1>
+        <Banner color="info" label="Every namespace by live pod count — greener is quiet, redder is busy." />
+        <Card :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">Pods per namespace</h3></template>
+          <template #body>
+            <div class="hm__grid">
+              <div v-for="t in tiles" :key="t.ns" class="hm__tile" :style="heat(t.count)" :title="t.ns + ': ' + t.count + ' pods'">
+                <div class="hm__count">{{ t.count }}</div>
+                <div class="hm__ns">{{ t.ns }}</div>
+              </div>
+            </div>
+          </template>
+        </Card>
+      </div>
+    </template>
+    <style scoped>
+      .hm { padding: 16px; }
+      .hm__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+      .hm__tile { border-radius: 8px; padding: 12px; color: #fff; min-height: 74px; display: flex; flex-direction: column; justify-content: space-between; }
+      .hm__count { font-size: 26px; font-weight: 700; line-height: 1; }
+      .hm__ns { font-size: 11px; opacity: 0.92; word-break: break-all; }
+    </style>
+  meta: '{"id":"namespace-heatmap","name":"NS Heatmap","icon":"dashboard"}'
+  nav: '{"scope":"cluster","group":"dashboards","groupLabel":"Dashboards","weight":95}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: image-inventory
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    import { Card } from '@components/Card';
+    export default {
+      components: { Banner, Card },
+      created() {
+        this.$store.dispatch('cluster/findAll', { type: 'pod' })
+          .then((rows) => { this.pods = rows || []; }).catch(() => { this.pods = []; });
+      },
+      data() { return { pods: [] }; },
+      computed: {
+        images() {
+          const by = {};
+          this.pods.forEach((p) => {
+            const cs = ((p.spec && p.spec.containers) || []).concat((p.spec && p.spec.initContainers) || []);
+            cs.forEach((c) => { if (c.image) { by[c.image] = (by[c.image] || 0) + 1; } });
+          });
+          return Object.keys(by).map((image) => ({ image, count: by[image] })).sort((a, b) => b.count - a.count);
+        },
+        max() { return this.images.reduce((m, i) => Math.max(m, i.count), 1); },
+      },
+    };
+    </script>
+    <template>
+      <div class="inv">
+        <h1 class="mb-20">Image Inventory</h1>
+        <Banner color="info" :label="images.length + ' distinct container images in use — what\'s actually running.'" />
+        <Card :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">Images by pod count</h3></template>
+          <template #body>
+            <div v-for="i in images" :key="i.image" class="inv__row" :title="i.count + '× ' + i.image">
+              <div class="inv__bar" :style="{ width: (i.count / max * 100) + '%' }" />
+              <div class="inv__img">{{ i.image }}</div>
+              <div class="inv__count">{{ i.count }}</div>
+            </div>
+          </template>
+        </Card>
+      </div>
+    </template>
+    <style scoped>
+      .inv { padding: 16px; }
+      .inv__row { position: relative; display: flex; align-items: center; gap: 12px; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+      .inv__bar { position: absolute; left: 0; top: 0; bottom: 0; background: var(--primary); opacity: 0.12; border-radius: 0 6px 6px 0; }
+      .inv__img { flex: 1; font-family: monospace; font-size: 12px; position: relative; word-break: break-all; }
+      .inv__count { position: relative; font-weight: 700; min-width: 28px; text-align: right; }
+    </style>
+  meta: '{"id":"image-inventory","name":"Image Inventory","icon":"list-flat"}'
+  nav: '{"scope":"cluster","group":"dashboards","groupLabel":"Dashboards","weight":95}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: restart-leaderboard
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    import { Card } from '@components/Card';
+    import { BadgeState } from '@components/BadgeState';
+    export default {
+      components: { Banner, Card, BadgeState },
+      created() {
+        this.$store.dispatch('cluster/findAll', { type: 'pod' })
+          .then((rows) => { this.pods = rows || []; }).catch(() => { this.pods = []; });
+      },
+      data() { return { pods: [] }; },
+      computed: {
+        top() {
+          return this.pods.map((p) => {
+            const cs = (p.status && p.status.containerStatuses) || [];
+            return { name: p.metadata.name, ns: p.metadata.namespace, restarts: cs.reduce((a, c) => a + (c.restartCount || 0), 0) };
+          }).filter((p) => p.restarts > 0).sort((a, b) => b.restarts - a.restarts).slice(0, 15);
+        },
+      },
+      methods: {
+        badgeColor(n) { return n >= 20 ? 'bg-error' : (n >= 5 ? 'bg-warning' : 'bg-info'); },
+      },
+    };
+    </script>
+    <template>
+      <div class="lb">
+        <h1 class="mb-20">Restart Leaderboard</h1>
+        <Banner color="info" label="The flappiest pods in the cluster — highest total container restarts first." />
+        <Banner v-if="!top.length" color="success" label="Nothing flapping — every pod is stable. 🎉" />
+        <Card v-else :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">Top restarts</h3></template>
+          <template #body>
+            <ol class="lb__list">
+              <li v-for="(p, i) in top" :key="p.ns + '/' + p.name" class="lb__row">
+                <span class="lb__rank">{{ i + 1 }}</span>
+                <span class="lb__name">{{ p.name }}<span class="text-muted"> · {{ p.ns }}</span></span>
+                <BadgeState :color="badgeColor(p.restarts)" :label="String(p.restarts)" />
+              </li>
+            </ol>
+          </template>
+        </Card>
+      </div>
+    </template>
+    <style scoped>
+      .lb { padding: 16px; max-width: 720px; }
+      .lb__list { list-style: none; margin: 0; padding: 0; }
+      .lb__row { display: flex; align-items: center; gap: 12px; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+      .lb__rank { width: 24px; text-align: center; font-weight: 700; color: var(--muted); }
+      .lb__name { flex: 1; }
+    </style>
+  meta: '{"id":"restart-leaderboard","name":"Restart Leaderboard","icon":"list-flat"}'
+  nav: '{"scope":"cluster","group":"dashboards","groupLabel":"Dashboards","weight":95}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: home-fleet-command
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: home-template
+data:
+  displayName: Rancher Admin — Fleet Command
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    import { Card } from '@components/Card';
+    export default {
+      components: { Banner, Card },
+      created() {
+        this.$store.dispatch('management/findAll', { type: 'management.cattle.io.cluster' })
+          .then((rows) => { this.rows = rows || []; }).catch(() => { this.rows = []; });
+      },
+      data() { return { rows: [] }; },
+      computed: {
+        total() { return this.rows.length; },
+        active() { return this.rows.filter((c) => c.metadata && c.metadata.state && c.metadata.state.name === 'active').length; },
+        attention() { return this.total - this.active; },
+        providers() {
+          const by = {};
+          this.rows.forEach((c) => { const p = c.provider || (c.status && c.status.provider) || 'other'; by[p] = (by[p] || 0) + 1; });
+          return Object.keys(by).map((name) => ({ name, count: by[name] })).sort((a, b) => b.count - a.count);
+        },
+      },
+    };
+    </script>
+    <template>
+      <div class="fc">
+        <h1 class="mb-20">Fleet Command</h1>
+        <Banner
+          :color="attention ? 'warning' : 'success'"
+          :label="attention ? (attention + ' of ' + total + ' clusters need attention') : ('All ' + total + ' clusters are active')"
+        />
+        <div class="fc__tiles">
+          <div class="fc__tile"><div class="fc__n">{{ total }}</div><div class="fc__l">Clusters</div></div>
+          <div class="fc__tile fc__tile--ok"><div class="fc__n">{{ active }}</div><div class="fc__l">Active</div></div>
+          <div class="fc__tile" :class="attention ? 'fc__tile--warn' : ''"><div class="fc__n">{{ attention }}</div><div class="fc__l">Need attention</div></div>
+        </div>
+        <Card class="fc__card" :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">By provider</h3></template>
+          <template #body>
+            <div v-for="p in providers" :key="p.name" class="fc__prov">
+              <div class="fc__pname">{{ p.name }}</div>
+              <div class="fc__track"><div class="fc__fill" :style="{ width: (p.count / (total || 1) * 100) + '%' }" /></div>
+              <div class="fc__pcount">{{ p.count }}</div>
+            </div>
+          </template>
+        </Card>
+      </div>
+    </template>
+    <style scoped>
+      .fc { padding: 24px; }
+      .fc__tiles { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+      .fc__tile { min-width: 130px; padding: 18px 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--box-bg); }
+      .fc__tile--ok { border-color: #3fb950; }
+      .fc__tile--warn { border-color: #d29922; }
+      .fc__n { font-size: 34px; font-weight: 700; }
+      .fc__l { color: var(--muted); font-size: 13px; }
+      .fc__prov { display: grid; grid-template-columns: 160px 1fr 40px; gap: 12px; align-items: center; margin-bottom: 6px; }
+      .fc__pname { font-size: 13px; }
+      .fc__track { height: 10px; border-radius: 5px; background: var(--border); overflow: hidden; }
+      .fc__fill { height: 100%; background: var(--primary); }
+      .fc__pcount { text-align: right; font-weight: 600; }
+    </style>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: home-command-launcher
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: home-template
+data:
+  displayName: Quick — Command Launcher
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    import { RcButton } from '@components/RcButton';
+    import { LabeledInput } from '@components/Form/LabeledInput';
+    export default {
+      components: { Banner, RcButton, LabeledInput },
+      created() {
+        this.$store.dispatch('management/findAll', { type: 'management.cattle.io.cluster' })
+          .then((rows) => { this.rows = rows || []; }).catch(() => { this.rows = []; });
+      },
+      data() { return { rows: [], q: '' }; },
+      computed: {
+        filtered() {
+          const q = this.q.trim().toLowerCase();
+          if (!q) { return this.rows; }
+          return this.rows.filter((c) => (c.nameDisplay || c.metadata.name || '').toLowerCase().includes(q));
+        },
+      },
+      methods: {
+        open(c) { this.$router.push({ name: 'c-cluster-explorer', params: { cluster: c.id } }); },
+      },
+    };
+    </script>
+    <template>
+      <div class="ln">
+        <div class="ln__hero">
+          <h1 class="ln__title">Where to?</h1>
+          <Banner color="info" :label="rows.length + ' cluster(s) at your command — filter and jump in.'" />
+          <LabeledInput v-model:value="q" class="ln__input" placeholder="Type to filter clusters…" />
+        </div>
+        <div class="ln__grid">
+          <RcButton
+            v-for="c in filtered"
+            :key="c.id"
+            variant="secondary"
+            class="ln__card"
+            @click="open(c)"
+          >
+            <span class="ln__name">{{ c.nameDisplay || c.metadata.name }}</span>
+            <span class="ln__go">Open →</span>
+          </RcButton>
+        </div>
+        <div v-if="!filtered.length" class="ln__none text-muted">No clusters match “{{ q }}”.</div>
+      </div>
+    </template>
+    <style scoped>
+      .ln { padding: 40px 24px; }
+      .ln__hero { max-width: 640px; margin: 0 auto 28px; text-align: center; }
+      .ln__title { font-size: 30px; margin-bottom: 14px; }
+      .ln__input { margin-top: 14px; text-align: left; }
+      .ln__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; max-width: 900px; margin: 0 auto; }
+      .ln__card { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+      .ln__name { font-weight: 600; }
+      .ln__go { color: var(--primary); }
+      .ln__none { text-align: center; margin-top: 20px; }
+    </style>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: home-cluster-weather
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: home-template
+data:
+  displayName: Fun — Cluster Weather
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    export default {
+      components: { Banner },
+      created() {
+        this.$store.dispatch('management/findAll', { type: 'management.cattle.io.cluster' })
+          .then((rows) => { this.rows = rows || []; }).catch(() => { this.rows = []; });
+      },
+      data() { return { rows: [] }; },
+      computed: {
+        total() { return this.rows.length; },
+        down() { return this.rows.filter((c) => !(c.metadata && c.metadata.state && c.metadata.state.name === 'active')).length; },
+        forecast() {
+          if (!this.total) { return { icon: '🌫️', word: 'Foggy', line: 'No clusters in view yet.' }; }
+          if (!this.down) { return { icon: '☀️', word: 'Sunny', line: 'All ' + this.total + ' clusters are active. Clear skies.' }; }
+          if (this.down <= this.total * 0.25) { return { icon: '⛅', word: 'Partly cloudy', line: this.down + ' cluster(s) need a look.' }; }
+          return { icon: '⛈️', word: 'Stormy', line: this.down + ' of ' + this.total + ' clusters are down. Grab an umbrella.' };
+        },
+      },
+    };
+    </script>
+    <template>
+      <div class="wx">
+        <Banner class="wx__banner" :color="down ? 'warning' : 'success'" :label="forecast.word + ' — ' + forecast.line" />
+        <div class="wx__icon">{{ forecast.icon }}</div>
+        <div class="wx__word">{{ forecast.word }}</div>
+        <div class="wx__line">{{ forecast.line }}</div>
+      </div>
+    </template>
+    <style scoped>
+      .wx { min-height: 60vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+      .wx__banner { width: 100%; max-width: 520px; margin-bottom: 24px; }
+      .wx__icon { font-size: 96px; line-height: 1; }
+      .wx__word { font-size: 32px; font-weight: 700; margin-top: 12px; }
+      .wx__line { color: var(--muted); font-size: 16px; margin-top: 8px; }
+    </style>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: traffic-lights
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    import { Card } from '@components/Card';
+    export default {
+      components: { Banner, Card },
+      created() {
+        const L = (type, key) => this.$store.dispatch('cluster/findAll', { type })
+          .then((r) => { this[key] = r || []; }).catch(() => { this[key] = []; });
+        L('node', 'nodes'); L('apps.deployment', 'deps'); L('pod', 'pods'); L('batch.job', 'jobs');
+      },
+      data() { return { nodes: [], deps: [], pods: [], jobs: [] }; },
+      computed: {
+        lights() {
+          const light = (bad, warnAt) => (bad === 0 ? 'green' : (bad <= warnAt ? 'amber' : 'red'));
+          const nodesReady = this.nodes.filter((n) => ((n.status && n.status.conditions) || []).some((c) => c.type === 'Ready' && c.status === 'True')).length;
+          const depsBad = this.deps.filter((d) => ((d.status && d.status.availableReplicas) || 0) < ((d.spec && d.spec.replicas) || 0)).length;
+          const podsBad = this.pods.filter((p) => { const ph = p.status && p.status.phase; return ph !== 'Running' && ph !== 'Succeeded'; }).length;
+          const jobsBad = this.jobs.filter((j) => (j.status && j.status.failed) > 0).length;
+          return [
+            { label: 'Nodes', detail: nodesReady + ' / ' + this.nodes.length + ' ready', color: (this.nodes.length && nodesReady === this.nodes.length) ? 'green' : 'red' },
+            { label: 'Deployments', detail: depsBad + ' degraded', color: light(depsBad, 2) },
+            { label: 'Pods', detail: podsBad + ' not running', color: light(podsBad, 3) },
+            { label: 'Jobs', detail: jobsBad + ' failed', color: light(jobsBad, 0) },
+          ];
+        },
+      },
+    };
+    </script>
+    <template>
+      <div class="tl">
+        <h1 class="mb-20">Ops Traffic Lights</h1>
+        <Banner color="info" label="Every subsystem, one glance — green is go, red needs you." />
+        <Card :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">Subsystem status</h3></template>
+          <template #body>
+            <div class="tl__grid">
+              <div v-for="l in lights" :key="l.label" class="tl__cell">
+                <div class="tl__light" :class="'tl__light--' + l.color" />
+                <div class="tl__label">{{ l.label }}</div>
+                <div class="tl__detail text-muted">{{ l.detail }}</div>
+              </div>
+            </div>
+          </template>
+        </Card>
+      </div>
+    </template>
+    <style scoped>
+      .tl { padding: 20px; }
+      .tl__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; max-width: 760px; }
+      .tl__cell { text-align: center; padding: 22px; border: 1px solid var(--border); border-radius: 12px; }
+      .tl__light { width: 60px; height: 60px; border-radius: 50%; margin: 0 auto 12px; box-shadow: 0 0 22px currentColor; }
+      .tl__light--green { background: #3fb950; color: #3fb950; }
+      .tl__light--amber { background: #d29922; color: #d29922; }
+      .tl__light--red { background: #f85149; color: #f85149; }
+      .tl__label { font-weight: 700; }
+      .tl__detail { font-size: 12px; }
+    </style>
+  meta: '{"id":"traffic-lights","name":"Traffic Lights","icon":"dashboard"}'
+  nav: '{"scope":"cluster","group":"dashboards","groupLabel":"Dashboards","weight":95}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: workload-board
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    import { Card } from '@components/Card';
+    export default {
+      components: { Banner, Card },
+      created() {
+        this.$store.dispatch('cluster/findAll', { type: 'apps.deployment' })
+          .then((r) => { this.deps = r || []; }).catch(() => { this.deps = []; });
+      },
+      data() { return { deps: [] }; },
+      computed: {
+        columns() {
+          const by = {};
+          this.deps.forEach((d) => { const ns = d.metadata.namespace; (by[ns] = by[ns] || []).push(d); });
+          return Object.keys(by).map((ns) => ({ ns, items: by[ns] })).sort((a, b) => b.items.length - a.items.length).slice(0, 8);
+        },
+      },
+      methods: {
+        ok(d) { return ((d.status && d.status.availableReplicas) || 0) === ((d.spec && d.spec.replicas) || 0); },
+        rep(d) { return ((d.status && d.status.availableReplicas) || 0) + '/' + ((d.spec && d.spec.replicas) || 0); },
+      },
+    };
+    </script>
+    <template>
+      <div class="kb">
+        <h1 class="mb-20">Workload Board</h1>
+        <Banner color="info" label="Deployments grouped by namespace — a green edge means fully available, red means degraded." />
+        <div class="kb__cols">
+          <Card
+            v-for="c in columns"
+            :key="c.ns"
+            class="kb__col"
+            :show-highlight-border="false"
+            :show-actions="false"
+          >
+            <template #title>
+              <span class="kb__head">{{ c.ns }} <span class="text-muted">{{ c.items.length }}</span></span>
+            </template>
+            <template #body>
+              <div v-for="d in c.items" :key="d.id" class="kb__card" :class="{ bad: !ok(d) }">
+                <div class="kb__name">{{ d.metadata.name }}</div>
+                <div class="kb__meta text-muted">{{ rep(d) }} ready</div>
+              </div>
+            </template>
+          </Card>
+        </div>
+      </div>
+    </template>
+    <style scoped>
+      .kb { padding: 16px; }
+      .kb__cols { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; align-items: flex-start; }
+      .kb__col { min-width: 210px; flex: 0 0 210px; }
+      .kb__head { font-weight: 700; }
+      .kb__card { background: var(--body-bg); border: 1px solid var(--border); border-left: 3px solid #3fb950; border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+      .kb__card.bad { border-left-color: #f85149; }
+      .kb__name { font-weight: 600; font-size: 13px; word-break: break-all; }
+      .kb__meta { font-size: 11px; }
+    </style>
+  meta: '{"id":"workload-board","name":"Workload Board","icon":"list-grouped"}'
+  nav: '{"scope":"cluster","group":"my-apps","groupLabel":"My Apps","weight":97}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: storage-treemap
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    import { Card } from '@components/Card';
+    const UNIT = { Ki: 1 / 1024, Mi: 1, Gi: 1024, Ti: 1024 * 1024, Pi: 1024 * 1024 * 1024 };
+    export default {
+      components: { Banner, Card },
+      created() {
+        this.$store.dispatch('cluster/findAll', { type: 'persistentvolumeclaim' })
+          .then((r) => { this.pvcs = r || []; }).catch(() => { this.pvcs = []; });
+      },
+      data() { return { pvcs: [] }; },
+      computed: {
+        tiles() {
+          const mib = (s) => {
+            const m = ('' + (s || '')).match(/([0-9.]+)\s*([A-Za-z]*)/);
+            if (!m) { return 0; }
+            return parseFloat(m[1]) * (UNIT[m[2]] || 1 / 1048576);
+          };
+          return this.pvcs.map((p) => {
+            const cap = (p.spec && p.spec.resources && p.spec.resources.requests && p.spec.resources.requests.storage) ||
+              (p.status && p.status.capacity && p.status.capacity.storage);
+            return { id: p.id, name: p.metadata.name, ns: p.metadata.namespace, cap: cap || '?', mib: mib(cap) };
+          }).sort((a, b) => b.mib - a.mib);
+        },
+        max() { return this.tiles.reduce((m, t) => Math.max(m, t.mib), 1); },
+      },
+      methods: {
+        span(t) {
+          const r = t.mib / this.max;
+          if (r > 0.6) { return 'tm__tile--xl'; }
+          if (r > 0.3) { return 'tm__tile--lg'; }
+          if (r > 0.12) { return 'tm__tile--md'; }
+          return '';
+        },
+      },
+    };
+    </script>
+    <template>
+      <div class="tm">
+        <h1 class="mb-20">Storage Treemap</h1>
+        <Banner color="info" label="Persistent volume claims sized by requested capacity — the big tiles eat the most disk." />
+        <Banner v-if="!tiles.length" color="warning" label="No PersistentVolumeClaims in this cluster." />
+        <Card v-else :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">Claims by capacity</h3></template>
+          <template #body>
+            <div class="tm__grid">
+              <div v-for="t in tiles" :key="t.id" class="tm__tile" :class="span(t)" :title="t.ns + '/' + t.name + ' — ' + t.cap">
+                <div class="tm__cap">{{ t.cap }}</div>
+                <div class="tm__name">{{ t.name }}</div>
+              </div>
+            </div>
+          </template>
+        </Card>
+      </div>
+    </template>
+    <style scoped>
+      .tm { padding: 16px; }
+      .tm__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); grid-auto-rows: 84px; grid-auto-flow: dense; gap: 8px; }
+      .tm__tile { background: var(--primary); color: #fff; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; }
+      .tm__tile--md { grid-column: span 2; }
+      .tm__tile--lg { grid-column: span 2; grid-row: span 2; }
+      .tm__tile--xl { grid-column: span 3; grid-row: span 2; }
+      .tm__cap { font-size: 20px; font-weight: 700; }
+      .tm__name { font-size: 11px; opacity: 0.9; word-break: break-all; }
+    </style>
+  meta: '{"id":"storage-treemap","name":"Storage Treemap","icon":"storage"}'
+  nav: '{"scope":"cluster","group":"dashboards","groupLabel":"Dashboards","weight":95}'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: event-ticker
+  namespace: default
+  labels:
+    templates.rancher.io/ai-templating: 'true'
+    templates.rancher.io/type: custom-view
+data:
+  kind: code
+  view.vue: |
+    <script>
+    import { Banner } from '@components/Banner';
+    import { Card } from '@components/Card';
+    import { BadgeState } from '@components/BadgeState';
+    export default {
+      components: { Banner, Card, BadgeState },
+      created() {
+        this.$store.dispatch('cluster/findAll', { type: 'event' })
+          .then((r) => { this.events = r || []; }).catch(() => { this.events = []; });
+      },
+      data() { return { events: [] }; },
+      computed: {
+        feed() {
+          const t = (e) => new Date(e.lastTimestamp || (e.metadata && e.metadata.creationTimestamp) || 0).getTime();
+          return [...this.events].sort((a, b) => t(b) - t(a)).slice(0, 30);
+        },
+      },
+      methods: {
+        warn(e) { return e.type === 'Warning'; },
+        obj(e) { const o = e.involvedObject || {}; return (o.kind || '') + '/' + (o.name || ''); },
+      },
+    };
+    </script>
+    <template>
+      <div class="ev">
+        <h1 class="mb-20">Event Ticker</h1>
+        <Banner color="info" :label="'The cluster\'s latest ' + feed.length + ' events — warnings flagged in red.'" />
+        <Card :show-highlight-border="false" :show-actions="false">
+          <template #title><h3 class="mb-0">Recent events</h3></template>
+          <template #body>
+            <div v-for="e in feed" :key="e.id" class="ev__row" :class="{ warn: warn(e) }">
+              <BadgeState :color="warn(e) ? 'bg-error' : 'bg-info'" :label="e.type || 'Normal'" />
+              <span class="ev__reason">{{ e.reason }}</span>
+              <span class="ev__obj text-muted">{{ obj(e) }}</span>
+              <span class="ev__msg">{{ e.message }}</span>
+            </div>
+          </template>
+        </Card>
+      </div>
+    </template>
+    <style scoped>
+      .ev { padding: 16px; }
+      .ev__row { display: grid; grid-template-columns: 96px 130px 160px 1fr; gap: 10px; align-items: baseline; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+      .ev__row.warn { background: rgba(248, 81, 73, 0.06); }
+      .ev__reason { font-weight: 600; }
+      .ev__obj { font-size: 12px; font-family: monospace; word-break: break-all; }
+      .ev__msg { font-size: 13px; color: var(--body-text); }
+    </style>
+  meta: '{"id":"event-ticker","name":"Event Ticker","icon":"notifier"}'
+  nav: '{"scope":"cluster","group":"dashboards","groupLabel":"Dashboards","weight":95}'
