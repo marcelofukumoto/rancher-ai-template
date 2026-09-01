@@ -262,6 +262,88 @@ export function homeTemplateSource(getters, name) {
   return cm?.data?.[SFC_KEY] || cm?.data?.source || '';
 }
 
+// ---- HOME DASHBOARD (grid of template panels, in tabs) ----
+// The applied Home per scope is a DASHBOARD — one or more tabs, each a 12-column grid of template
+// panels ({ template, x, y, w, h }). It is stored inline in the config ConfigMap's home.{global,users}
+// (replacing the legacy single-template-name string, which is migrated on read to a 1-panel dashboard).
+
+let idSeq = 0;
+
+function uid(prefix) {
+  idSeq += 1;
+
+  return `${ prefix }-${ Date.now().toString(36) }${ idSeq.toString(36) }`;
+}
+
+export function newTab(name) {
+  return {
+    id: uid('tab'), name: name || 'Tab', panels: []
+  };
+}
+
+export function emptyDashboard() {
+  return { tabs: [newTab('Home')] };
+}
+
+/** Coerce a stored home value (undefined | legacy string | dashboard object) into a valid dashboard. */
+export function migrateToDashboard(value) {
+  if (value && typeof value === 'object' && Array.isArray(value.tabs)) {
+    const tabs = value.tabs
+      .filter((t) => t && typeof t === 'object')
+      .map((t) => ({
+        id:     t.id || uid('tab'),
+        name:   t.name || 'Tab',
+        panels: (Array.isArray(t.panels) ? t.panels : [])
+          .filter((p) => p && p.template)
+          .map((p) => ({
+            id:       p.id || uid('panel'),
+            template: p.template,
+            x:        Number(p.x) || 0,
+            y:        Number(p.y) || 0,
+            w:        Number(p.w) || 6,
+            h:        Number(p.h) || 5,
+          })),
+      }));
+
+    return { tabs: tabs.length ? tabs : [newTab('Home')] };
+  }
+
+  if (typeof value === 'string' && value) {
+    // Legacy single applied template -> one tab, one full-width panel.
+    return {
+      tabs: [{
+        id:     uid('tab'),
+        name:   'Home',
+        panels: [{
+          id: uid('panel'), template: value, x: 0, y: 0, w: 12, h: 8
+        }],
+      }],
+    };
+  }
+
+  return emptyDashboard();
+}
+
+/**
+ * Applied Home dashboards split by scope + the one THIS user actually sees (user overrides global).
+ * `global`/`user` are null when that scope has nothing applied; `resolved` is the migrated dashboard
+ * (or null) the user should see.
+ */
+export function appliedDashboardScopes(getters, userId) {
+  const home = homeConfig(getters);
+  const rawGlobal = home.global || null;
+  const rawUser = (userId && home.users?.[userId]) || null;
+  const rawResolved = rawUser || rawGlobal;
+
+  return {
+    global:    rawGlobal ? migrateToDashboard(rawGlobal) : null,
+    user:      rawUser ? migrateToDashboard(rawUser) : null,
+    resolved:  rawResolved ? migrateToDashboard(rawResolved) : null,
+    hasGlobal: !!rawGlobal,
+    hasUser:   !!rawUser,
+  };
+}
+
 // ---- NAV registration (unchanged from the CRD version) ----
 function navGroup(group) {
   if (!group) {
@@ -589,6 +671,28 @@ export async function applyHome(store, scope, name, userId) {
     home.users = { ...(home.users || {}), [userId]: name };
   } else {
     home.global = name;
+  }
+
+  await persistHome(store, home);
+}
+
+/** Persist a whole Home DASHBOARD (tabs + panels) for a scope. Passing null clears that scope. */
+export async function saveDashboard(store, scope, dashboard, userId) {
+  const home = safeParse(cmById(store.getters, CONFIG_NAME)?.data?.home, {});
+
+  if (scope === 'user') {
+    if (!userId) {
+      return;
+    }
+    if (dashboard) {
+      home.users = { ...(home.users || {}), [userId]: dashboard };
+    } else if (home.users) {
+      delete home.users[userId];
+    }
+  } else if (dashboard) {
+    home.global = dashboard;
+  } else {
+    delete home.global;
   }
 
   await persistHome(store, home);

@@ -1,53 +1,42 @@
 <script>
 import StockHome from '@shell/pages/home.vue';
-import TemplateCode from '../components/TemplateCode.vue';
-import HomeConfigChat from '../components/HomeConfigChat.vue';
+import DashboardGrid from '../components/DashboardGrid.vue';
+import HomeTemplateEditor from '../components/HomeTemplateEditor.vue';
 import {
-  isTemplatingEnabled, appliedHomeScopes, homeTemplateSource, savedHomeTemplates,
-  saveHomeTemplate, applyHome, clearHome, fetchTemplatingConfigMaps
+  isTemplatingEnabled, appliedDashboardScopes, saveDashboard, savedHomeTemplates,
+  emptyDashboard, newTab, fetchTemplatingConfigMaps
 } from '../templating/template-engine';
+import { DEFAULT_PANEL, firstFreeSlot } from '../templating/dashboard-layout';
 
-const STARTER_SFC = `<script>
-export default {};
-<\/script>
-<template>
-  <div style="padding: 40px">
-    <h1>New Home template</h1>
-  </div>
-<\/template>`;
-
-// The extension's Home page. Renders the APPLIED HomeTemplate CR, plus an in-page editor with the
-// full SAVED/APPLIED workflow (ported from templating-for-ai):
-//   - pick which SAVED template to edit (many HomeTemplate CRs)
-//   - New / Save (persist to the SELECTED template)
-//   - Apply to Global / Apply to My User (repoint TemplatingConfig.spec.home.{global,users})
-// Editing previews the SELECTED draft live; closing returns to the applied render.
+// The extension's Home page. The applied Home is a DASHBOARD — one or more tabs, each a grid of
+// template panels. Outside edit mode it renders SEAMLESSLY (no titles/frames) so several templates
+// read as one page, with a compact tab switcher only when there is more than one tab. "Edit Home"
+// opens a layout editor: add/remove/change/drag/resize panels, manage tabs, per scope (Global or
+// Your Home). Everything is stored as ConfigMaps, so it works with or without the AI. Reset restores
+// the layout as it was when editing began.
 export default {
   name:       'AiTemplatingHome',
   components: {
-    StockHome, TemplateCode, HomeConfigChat
+    StockHome, DashboardGrid, HomeTemplateEditor
   },
 
   data() {
     return {
-      userId:         null,
-      loaded:         false,
-      showEditor:     false,
-      selectedName:   '',
-      draft:          '',
-      debouncedDraft: '',
-      saving:         false,
-      saveError:      '',
-      applyStatus:    '',
-      debounceTimer:  null,
-      editorWidth:    42,
+      userId:          null,
+      loaded:          false,
+      editing:         false,
+      scope:           'global', // which scope the editor is writing to
+      working:         null, // working-copy dashboard while editing (a DRAFT — not published)
+      snapshot:        null, // JSON of the dashboard when editing began (for Reset)
+      savedBaseline:   null, // JSON of the last PUBLISHED state (for the dirty check)
+      activeTabId:     null,
+      editingTemplate: null, // template name whose CONTENT is open in the split editor
+      saving:          false,
+      status:          '',
+      error:           '',
     };
   },
 
-  // The applied Home (global + per-user) and the rendered `source` are COMPUTED off the store, so they
-  // stay correct as ConfigMaps load/change — applying, removing or editing a template re-resolves them
-  // reactively (no reload, no stale one-shot state). created() just primes the store and resolves the
-  // current user id.
   async created() {
     for (let attempt = 0; attempt < 20; attempt++) {
       try {
@@ -57,7 +46,7 @@ export default {
 
         this.userId = user?.id || this.$store.getters['auth/user']?.id || null;
 
-        if (this.templates.length || attempt >= 4) {
+        if (this.appliedDashboard || savedHomeTemplates(this.$store.getters).length || attempt >= 4) {
           break;
         }
       } catch (e) { /* retry */ }
@@ -65,11 +54,8 @@ export default {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
+    this.syncActiveTab();
     this.loaded = true;
-  },
-
-  beforeUnmount() {
-    clearTimeout(this.debounceTimer);
   },
 
   computed: {
@@ -77,252 +63,239 @@ export default {
       return isTemplatingEnabled(this.$store.getters);
     },
 
-    templates() {
+    scopes() {
+      return appliedDashboardScopes(this.$store.getters, this.userId);
+    },
+
+    // What the user sees when NOT editing (their personal Home overrides the global default).
+    appliedDashboard() {
+      return this.templatingEnabled ? this.scopes.resolved : null;
+    },
+
+    // The dashboard currently on screen — the live working copy while editing, else the applied one.
+    dashboard() {
+      return this.editing ? this.working : this.appliedDashboard;
+    },
+
+    tabs() {
+      return this.dashboard?.tabs || [];
+    },
+
+    activeTab() {
+      return this.tabs.find((t) => t.id === this.activeTabId) || this.tabs[0] || null;
+    },
+
+    panels() {
+      return this.activeTab?.panels || [];
+    },
+
+    showTabs() {
+      return this.editing || this.tabs.length > 1;
+    },
+
+    // True when the working draft differs from the last-published state for this scope.
+    dirty() {
+      return this.editing && this.savedBaseline !== null && JSON.stringify(this.working) !== this.savedBaseline;
+    },
+
+    templateOptions() {
       return savedHomeTemplates(this.$store.getters).map((cr) => ({
         name:        cr.metadata?.name,
         displayName: cr.spec?.displayName || cr.metadata?.name,
       }));
     },
-
-    // The applied Home template names split by scope + the one THIS user actually sees (user || global).
-    appliedScopes() {
-      return appliedHomeScopes(this.$store.getters, this.userId);
-    },
-
-    appliedGlobalName() {
-      return this.appliedScopes.global;
-    },
-
-    appliedUserName() {
-      return this.appliedScopes.user;
-    },
-
-    appliedName() {
-      return this.appliedScopes.resolved;
-    },
-
-    appliedGlobalDisplay() {
-      return this.displayNameOf(this.appliedGlobalName);
-    },
-
-    appliedUserDisplay() {
-      return this.displayNameOf(this.appliedUserName);
-    },
-
-    // Source rendered when the editor is closed: the applied Home template's SFC (empty when templating
-    // is off or nothing is applied, so the normal render falls back to stock Rancher). TemplateCode
-    // watches this and recompiles, so apply/remove/edit all reflect live.
-    source() {
-      return (this.templatingEnabled && this.appliedName) ? homeTemplateSource(this.$store.getters, this.appliedName) : '';
-    },
-
-    previewSource() {
-      return this.showEditor ? this.debouncedDraft : this.source;
-    },
   },
 
   watch: {
-    draft(val) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = setTimeout(() => {
-        this.debouncedDraft = val;
-      }, 300);
+    // If the applied dashboard changes underneath us (or on first load), keep a valid active tab.
+    appliedDashboard() {
+      if (!this.editing) {
+        this.syncActiveTab();
+      }
     },
   },
 
   methods: {
-    savedCR(name) {
-      return savedHomeTemplates(this.$store.getters).find((h) => h.metadata?.name === name);
+    clone(obj) {
+      return JSON.parse(JSON.stringify(obj));
     },
 
-    // Friendly display name for a saved template's internal name (falls back to the name itself).
-    displayNameOf(name) {
-      if (!name) {
-        return null;
-      }
+    syncActiveTab() {
+      const tabs = this.tabs;
 
-      return this.templates.find((t) => t.name === name)?.displayName || name;
+      if (!tabs.find((t) => t.id === this.activeTabId)) {
+        this.activeTabId = tabs[0]?.id || null;
+      }
     },
 
-    // How a template is applied, for the picker: your personal Home, the global default, or both.
-    appliedLabel(name) {
-      const tags = [];
-
-      if (name && name === this.appliedUserName) {
-        tags.push('your Home');
-      }
-      if (name && name === this.appliedGlobalName) {
-        tags.push('applied globally');
-      }
-
-      return tags.length ? ` (${ tags.join(', ') })` : '';
-    },
-
+    // ---- edit lifecycle ----
     toggleEditor() {
-      this.showEditor = !this.showEditor;
-
-      if (this.showEditor) {
-        this.saveError = '';
-        this.applyStatus = '';
-        this.selectSaved(this.appliedName || this.templates[0]?.name || '');
+      if (this.editing) {
+        this.exitEdit();
+      } else {
+        this.enterEdit();
       }
     },
 
-    selectSaved(name) {
-      this.selectedName = name;
-      this.draft = (name && this.savedCR(name)?.spec?.source) || '';
-      this.debouncedDraft = this.draft;
+    enterEdit() {
+      this.status = '';
+      this.error = '';
+      this.scope = 'global';
+      this.editingTemplate = null;
+      this.seedWorking();
+      this.editing = true;
     },
 
-    // The AI wrote the selected Home template ConfigMap — pull the new source into the editor. The
-    // normal-render `source` is computed off the store, so if the edited template is the applied one
-    // it updates on its own.
-    async onAgentApplied() {
-      await fetchTemplatingConfigMaps(this.$store);
-      const src = this.savedCR(this.selectedName)?.spec?.source;
-
-      if (src) {
-        this.draft = src;
-        this.debouncedDraft = src;
-      }
-    },
-
-    // Drag the divider to resize the editor column (clamped 20–75%). Listeners live on WINDOW, not
-    // the handle: window always receives pointerup no matter where the cursor is when released (over
-    // the re-rendering preview, off-screen, ...), so the drag can't get "stuck" and leak a move
-    // listener that resizes on every later mouse move. (setPointerCapture is deliberately NOT used —
-    // capture can be lost when the editor re-renders mid-drag, which is exactly what stuck it before.)
-    startResize(e) {
-      e.preventDefault();
-      const container = this.$refs.split;
-
-      if (!container) {
+    // Exit edit mode. Layout edits are a DRAFT — nothing was published — so leaving with unsaved
+    // changes discards them (after a confirm). Anything you clicked Save on is already live.
+    async exitEdit() {
+      if (this.dirty && !window.confirm('You have unsaved changes to this Home layout. Discard them?')) {
         return;
       }
-
-      // Anchor the drag to the grab point: track the delta from where the pointer went down, not the
-      // pointer's absolute position. The handle sits a few px to the right of the editor's edge, so
-      // absolute tracking would snap (jump) the pane to the cursor on the first move.
-      const startX = e.clientX;
-      const startWidth = this.editorWidth;
-      const totalWidth = container.getBoundingClientRect().width || 1;
-
-      const onMove = (ev) => {
-        const deltaPct = ((ev.clientX - startX) / totalWidth) * 100;
-
-        this.editorWidth = Math.max(20, Math.min(75, startWidth + deltaPct));
-      };
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        window.removeEventListener('pointercancel', onUp);
-        window.removeEventListener('blur', onUp);
-      };
-
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
-      window.addEventListener('pointercancel', onUp);
-      window.addEventListener('blur', onUp);
+      this.editing = false;
+      this.working = null;
+      this.snapshot = null;
+      this.savedBaseline = null;
+      this.editingTemplate = null;
+      // Re-read the published state so the non-edit render is correct.
+      await fetchTemplatingConfigMaps(this.$store).catch(() => {});
+      this.syncActiveTab();
     },
 
-    // Persist the draft to the SELECTED saved template. Does NOT change what is applied.
-    async saveHome() {
-      if (!this.selectedName) {
+    // Load the chosen scope's published dashboard into the working DRAFT (or an empty one).
+    // `snapshot` = Reset target (edit start); `savedBaseline` = last-published state (dirty check).
+    seedWorking() {
+      const existing = this.scope === 'user' ? this.scopes.user : this.scopes.global;
+      const dash = existing ? this.clone(existing) : emptyDashboard();
+      const json = JSON.stringify(dash);
+
+      this.working = dash;
+      this.snapshot = json;
+      this.savedBaseline = json;
+      this.activeTabId = dash.tabs[0]?.id || null;
+    },
+
+    setScope(scope) {
+      if (scope === this.scope) {
         return;
       }
+      if (this.dirty && !window.confirm('Discard unsaved changes to switch scope?')) {
+        return;
+      }
+      this.scope = scope;
+      this.status = '';
+      this.error = '';
+      this.seedWorking();
+    },
 
+    // Publish the working draft to the current scope. Global → everyone; Your Home → just you.
+    async save() {
       this.saving = true;
-      this.saveError = '';
-      this.applyStatus = '';
+      this.error = '';
+      this.status = '';
 
       try {
-        const cr = this.savedCR(this.selectedName);
-
-        await saveHomeTemplate(this.$store, {
-          name: this.selectedName, source: this.draft, displayName: cr?.spec?.displayName
-        });
-
-        this.applyStatus = 'Saved.';
+        await saveDashboard(this.$store, this.scope, this.working, this.userId);
+        this.savedBaseline = JSON.stringify(this.working);
+        await fetchTemplatingConfigMaps(this.$store).catch(() => {});
+        this.status = this.scope === 'user' ? 'Saved to your Home.' : 'Saved — live for everyone.';
       } catch (e) {
-        this.saveError = e?.message || String(e);
+        this.error = e?.message || String(e);
       } finally {
         this.saving = false;
       }
     },
 
-    // Repoint the applied Home (global or per-user) to the selected template.
-    async applyTo(scope) {
-      const key = scope === 'user' ? this.userId : 'global';
+    // ---- panel mutations (draft only — mutate the working copy, publish on Save) ----
+    onGridUpdate(panels) {
+      const tab = this.working.tabs.find((t) => t.id === this.activeTabId);
 
-      if (!this.selectedName || (scope === 'user' && !key)) {
-        return;
-      }
-
-      this.saving = true;
-      this.saveError = '';
-
-      try {
-        await applyHome(this.$store, scope, this.selectedName, this.userId);
-        // Force-refresh the config ConfigMap so the applied/source computeds re-resolve — closing the
-        // editor then shows the just-applied template (and marks it) live, no reload needed.
-        await fetchTemplatingConfigMaps(this.$store);
-
-        this.applyStatus = scope === 'user' ? 'Applied to your user.' : 'Applied globally.';
-      } catch (e) {
-        this.saveError = e?.message || String(e);
-      } finally {
-        this.saving = false;
+      if (tab) {
+        tab.panels = panels;
       }
     },
 
-    // Unset the applied Home for a scope. Removing the global default (with no personal pick) reverts
-    // everyone to stock Rancher; removing your personal Home falls back to the global default — both
-    // live (computeds re-resolve off the refreshed store), with no reload.
-    async removeApply(scope) {
-      const current = scope === 'user' ? this.appliedUserName : this.appliedGlobalName;
-
-      if (!current || (scope === 'user' && !this.userId)) {
+    addPanel(templateName) {
+      if (!templateName) {
         return;
       }
 
-      this.saving = true;
-      this.saveError = '';
-      this.applyStatus = '';
+      const tab = this.working.tabs.find((t) => t.id === this.activeTabId);
 
-      try {
-        await clearHome(this.$store, scope, this.userId);
-        await fetchTemplatingConfigMaps(this.$store);
+      if (!tab) {
+        return;
+      }
 
-        this.applyStatus = scope === 'user' ? 'Removed your personal Home.' : 'Removed the global Home.';
-      } catch (e) {
-        this.saveError = e?.message || String(e);
-      } finally {
-        this.saving = false;
+      const slot = firstFreeSlot(tab.panels, DEFAULT_PANEL.w, DEFAULT_PANEL.h);
+
+      tab.panels = [...tab.panels, {
+        id: `panel-${ Date.now().toString(36) }`, template: templateName, ...slot, w: DEFAULT_PANEL.w, h: DEFAULT_PANEL.h
+      }];
+    },
+
+    // ---- tab management ----
+    selectTab(id) {
+      this.activeTabId = id;
+    },
+
+    addTab() {
+      const tab = newTab(`Tab ${ this.working.tabs.length + 1 }`);
+
+      this.working.tabs.push(tab);
+      this.activeTabId = tab.id;
+    },
+
+    renameTab(tab) {
+      const name = (window.prompt('Tab name:', tab.name) || '').trim();
+
+      if (name) {
+        tab.name = name;
       }
     },
 
-    // Create a new SAVED template and switch the editor to it.
-    async newTemplate() {
-      const label = (window.prompt('Name for the new saved Home template:') || '').trim();
-
-      if (!label) {
+    removeTab(id) {
+      if (this.working.tabs.length <= 1) {
         return;
       }
+      this.working.tabs = this.working.tabs.filter((t) => t.id !== id);
+      if (this.activeTabId === id) {
+        this.activeTabId = this.working.tabs[0]?.id || null;
+      }
+    },
 
-      const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'template';
+    // ---- per-panel template CONTENT editor ----
+    openTemplateEditor(name) {
+      this.editingTemplate = name;
+    },
 
+    closeTemplateEditor() {
+      this.editingTemplate = null;
+    },
+
+    // ---- reset / clear ----
+    reset() {
+      if (!this.snapshot) {
+        return;
+      }
+      this.working = JSON.parse(this.snapshot);
+      this.syncActiveTab();
+      this.activeTabId = this.working.tabs[0]?.id || this.activeTabId;
+      this.status = 'Reverted to how it was when you started editing.';
+    },
+
+    async clearScope() {
+      if (!window.confirm(`Remove the ${ this.scope === 'user' ? 'personal' : 'global' } Home dashboard?`)) {
+        return;
+      }
       this.saving = true;
-      this.saveError = '';
 
       try {
-        await saveHomeTemplate(this.$store, {
-          name: slug, source: STARTER_SFC, displayName: label
-        });
+        await saveDashboard(this.$store, this.scope, null, this.userId);
         await fetchTemplatingConfigMaps(this.$store);
-        this.selectSaved(slug);
-        this.applyStatus = `Created "${ label }".`;
+        this.status = 'Removed.';
+        this.seedWorking();
       } catch (e) {
-        this.saveError = e?.message || String(e);
+        this.error = e?.message || String(e);
       } finally {
         this.saving = false;
       }
@@ -334,162 +307,150 @@ export default {
 <template>
   <div
     class="ai-home"
-    :class="{ 'ai-home--editing': showEditor }"
+    :class="{ 'ai-home--editing': editing || editingTemplate }"
   >
-    <!-- Edit bar -->
-    <div
-      v-if="loaded && templatingEnabled"
-      class="ai-home__editbar"
-    >
-      <button
-        class="btn btn-sm role-secondary"
-        @click="toggleEditor"
-      >
-        {{ showEditor ? 'Close editor' : 'Edit Home' }}
-      </button>
+    <!-- A panel's ✎ opens the classic single-template content editor (source + AI chat + preview). -->
+    <HomeTemplateEditor
+      v-if="editingTemplate"
+      :name="editingTemplate"
+      @close="closeTemplateEditor"
+    />
 
-      <template v-if="showEditor">
-        <label class="ai-home__label">Editing</label>
-        <select
-          class="ai-home__select"
-          :value="selectedName"
-          @change="selectSaved($event.target.value)"
-        >
-          <option
-            v-for="t in templates"
-            :key="t.name"
-            :value="t.name"
-          >
-            {{ t.displayName }}{{ appliedLabel(t.name) }}
-          </option>
-        </select>
+    <template v-else>
+      <!-- Compact bar: edit toggle + tabs (+ edit-only controls). Kept small so it doesn't crowd the page. -->
+      <div
+        v-if="loaded && templatingEnabled"
+        class="ai-home__bar"
+      >
         <button
           class="btn btn-sm role-secondary"
-          :disabled="saving"
-          @click="newTemplate"
+          @click="toggleEditor"
         >
-          New
+          {{ editing ? 'Done' : 'Edit Home' }}
         </button>
-        <button
-          class="btn btn-sm role-primary"
-          :disabled="saving"
-          @click="saveHome"
-        >
-          {{ saving ? 'Saving…' : 'Save' }}
-        </button>
-        <span class="ai-home__sep" />
-        <div class="ai-home__applies">
-          <div class="ai-home__apply-row">
-            <span class="ai-home__scope">Global</span>
-            <span
-              class="ai-home__applied-name"
-              :class="{ 'ai-home__applied-name--empty': !appliedGlobalName }"
-              :title="appliedGlobalName ? 'The Home everyone sees by default' : 'No global Home — everyone sees stock Rancher'"
-            >{{ appliedGlobalDisplay || 'none' }}</span>
-            <button
-              class="btn btn-sm role-secondary"
-              :disabled="saving || !selectedName"
-              title="Make the selected (Editing) template the Home everyone sees by default"
-              @click="applyTo('global')"
-            >
-              Apply selected
-            </button>
-            <button
-              v-if="appliedGlobalName"
-              class="btn btn-sm role-link"
-              :disabled="saving"
-              title="Remove the global Home (revert everyone to stock Rancher)"
-              @click="removeApply('global')"
-            >
-              Remove
-            </button>
-          </div>
-          <div class="ai-home__apply-row">
-            <span class="ai-home__scope">Your Home</span>
-            <span
-              class="ai-home__applied-name"
-              :class="{ 'ai-home__applied-name--empty': !appliedUserName }"
-              :title="appliedUserName ? 'Your personal Home (overrides the global default)' : 'No personal Home — you see the global default'"
-            >{{ appliedUserDisplay || 'none' }}</span>
-            <button
-              class="btn btn-sm role-secondary"
-              :disabled="saving || !userId || !selectedName"
-              title="Make the selected (Editing) template your personal Home page"
-              @click="applyTo('user')"
-            >
-              Apply selected
-            </button>
-            <button
-              v-if="appliedUserName"
-              class="btn btn-sm role-link"
-              :disabled="saving"
-              title="Remove your personal Home (fall back to the global default)"
-              @click="removeApply('user')"
-            >
-              Remove
-            </button>
-          </div>
-        </div>
-        <span
-          v-if="applyStatus"
-          class="text-success ml-10"
-        >{{ applyStatus }}</span>
-        <span
-          v-if="saveError"
-          class="text-error ml-10"
-        >{{ saveError }}</span>
-      </template>
-    </div>
 
-    <!-- Editor: draft + chat (left), live preview (right) -->
-    <div
-      v-if="showEditor"
-      ref="split"
-      class="ai-home__split"
-    >
-      <div
-        class="ai-home__editor"
-        :style="{ width: editorWidth + '%' }"
-      >
-        <textarea
-          v-model="draft"
-          class="ai-home__code"
-          spellcheck="false"
-        />
-        <div class="ai-home__chat">
-          <HomeConfigChat
-            :config-map-name="selectedName"
-            @applied="onAgentApplied"
-          />
-        </div>
-      </div>
-      <div
-        class="ai-home__resizer"
-        title="Drag to resize"
-        @pointerdown="startResize"
-      />
-      <div class="ai-home__preview">
-        <TemplateCode
-          v-if="previewSource"
-          :key="debouncedDraft.length"
-          :source="previewSource"
-        />
+        <!-- Tabs: compact switcher (and manager while editing) -->
         <div
-          v-else
-          class="text-muted p-20"
+          v-if="showTabs"
+          class="ai-home__tabs"
         >
-          Nothing to preview.
+          <button
+            v-for="t in tabs"
+            :key="t.id"
+            class="ai-home__tab"
+            :class="{ 'ai-home__tab--active': t.id === activeTabId }"
+            @click="selectTab(t.id)"
+            @dblclick="editing && renameTab(t)"
+          >
+            {{ t.name }}
+            <i
+              v-if="editing && tabs.length > 1"
+              class="icon icon-close ai-home__tab-x"
+              @click.stop="removeTab(t.id)"
+            />
+          </button>
+          <button
+            v-if="editing"
+            class="ai-home__tab ai-home__tab--add"
+            title="Add tab"
+            @click="addTab"
+          >
+            <i class="icon icon-plus" />
+          </button>
         </div>
-      </div>
-    </div>
 
-    <!-- Normal render. Gate on templatingEnabled so the kill switch (⌘/Ctrl+Shift+.) swaps between
-         the templated Home and stock Rancher LIVE, without a reload. -->
-    <template v-else>
-      <TemplateCode
-        v-if="templatingEnabled && source"
-        :source="source"
-      />
+        <template v-if="editing">
+          <span class="ai-home__sep" />
+          <label class="ai-home__lbl">Editing</label>
+          <div class="ai-home__scope">
+            <button
+              class="btn btn-sm"
+              :class="scope === 'global' ? 'role-primary' : 'role-secondary'"
+              @click="setScope('global')"
+            >
+              Global
+            </button>
+            <button
+              class="btn btn-sm"
+              :class="scope === 'user' ? 'role-primary' : 'role-secondary'"
+              :disabled="!userId"
+              @click="setScope('user')"
+            >
+              Your Home
+            </button>
+          </div>
+
+          <select
+            class="ai-home__add"
+            :disabled="!templateOptions.length"
+            @change="addPanel($event.target.value); $event.target.value = ''"
+          >
+            <option value="">
+              ＋ Add template…
+            </option>
+            <option
+              v-for="t in templateOptions"
+              :key="t.name"
+              :value="t.name"
+            >
+              {{ t.displayName }}
+            </option>
+          </select>
+
+          <span class="ai-home__sep" />
+          <button
+            class="btn btn-sm role-primary"
+            :disabled="saving || !dirty"
+            title="Publish this layout to the selected scope"
+            @click="save"
+          >
+            {{ saving ? 'Saving…' : 'Save' }}
+          </button>
+          <button
+            class="btn btn-sm role-secondary"
+            :disabled="saving || !dirty"
+            title="Restore the layout as it was when you started editing"
+            @click="reset"
+          >
+            Reset
+          </button>
+          <button
+            class="btn btn-sm role-link"
+            :disabled="saving"
+            title="Remove this scope's Home dashboard"
+            @click="clearScope"
+          >
+            Remove
+          </button>
+          <span
+            v-if="dirty"
+            class="ai-home__dirty"
+          >• Unsaved</span>
+
+          <span
+            v-if="status"
+            class="text-success ml-10"
+          >{{ status }}</span>
+          <span
+            v-if="error"
+            class="text-error ml-10"
+          >{{ error }}</span>
+        </template>
+      </div>
+
+      <!-- Applied dashboard (or edit surface). Gate on templatingEnabled so the kill switch swaps to
+         stock Rancher live. StockHome shows when nothing is applied. -->
+      <div
+        v-if="loaded && templatingEnabled && dashboard && (editing || panels.length)"
+        class="ai-home__surface"
+      >
+        <DashboardGrid
+          :panels="panels"
+          :editing="editing"
+          @update="onGridUpdate"
+          @edit="openTemplateEditor"
+        />
+      </div>
       <StockHome v-else-if="loaded" />
     </template>
   </div>
@@ -497,33 +458,87 @@ export default {
 
 <style lang="scss" scoped>
 .ai-home {
-  // While editing, fill the space under the app header and DON'T scroll the page — the editor
-  // and preview scroll internally instead. (--header-height falls back to the standard 54px.)
   &--editing {
-    display:        flex;
-    flex-direction: column;
-    height:         calc(100vh - var(--header-height, 54px));
-    overflow:       hidden;
+    min-height: calc(100vh - var(--header-height, 54px));
   }
 
-  &__editbar {
-    display:       flex;
+  &__bar {
     align-items:   center;
-    gap:           8px;
-    padding:       8px 16px;
+    background:    var(--header-bg, var(--box-bg));
     border-bottom: 1px solid var(--border);
-    background:    var(--box-bg);
+    display:       flex;
     flex-wrap:     wrap;
-    flex:          0 0 auto;
+    gap:           8px;
+    padding:       6px 16px;
   }
 
-  &__label {
-    margin: 0 0 0 8px;
+  &__tabs {
+    display: flex;
+    gap:     2px;
+  }
+
+  &__tab {
+    align-items:   center;
+    background:    transparent;
+    border:        1px solid transparent;
+    border-radius: var(--border-radius);
+    color:         var(--body-text);
+    cursor:        pointer;
+    display:       flex;
+    font-size:     13px;
+    gap:           4px;
+    padding:       3px 10px;
+
+    &:hover {
+      color: var(--link);
+    }
+
+    &--active {
+      background:    var(--body-bg);
+      border-color: var(--border);
+      font-weight:  600;
+    }
+
+    &--add {
+      padding: 3px 8px;
+    }
+  }
+
+  &__tab-x {
+    font-size: 10px;
+    opacity:   0.6;
+
+    &:hover {
+      color:   var(--error);
+      opacity: 1;
+    }
+  }
+
+  &__sep {
+    width:      1px;
+    height:     20px;
+    background: var(--border);
+    margin:     0 2px;
+  }
+
+  &__dirty {
+    color:       var(--warning);
+    font-size:   12px;
+    font-weight: 600;
+  }
+
+  &__lbl {
     color:  var(--muted);
+    margin: 0;
   }
 
-  &__select {
-    height:        30px;
+  &__scope {
+    display: flex;
+    gap:     2px;
+  }
+
+  &__add {
+    height:        28px;
     border:        1px solid var(--border);
     border-radius: var(--border-radius);
     background:    var(--body-bg);
@@ -531,109 +546,8 @@ export default {
     padding:       0 8px;
   }
 
-  &__sep {
-    width:      1px;
-    height:     22px;
-    background: var(--border);
-    margin:     0 4px;
-  }
-
-  &__applies {
-    display:        flex;
-    flex-direction: column;
-    gap:            4px;
-  }
-
-  &__apply-row {
-    display:     flex;
-    align-items: center;
-    gap:         6px;
-  }
-
-  &__scope {
-    min-width:      68px;
-    color:          var(--muted);
-    font-size:      11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  &__applied-name {
-    min-width:     120px;
-    padding:       2px 8px;
-    border:        1px solid var(--border);
-    border-radius: var(--border-radius);
-    background:    var(--body-bg);
-    font-weight:   600;
-    font-size:     12px;
-
-    &--empty {
-      color:       var(--muted);
-      font-weight: 400;
-      font-style:  italic;
-    }
-  }
-
-  &__split {
-    display:    flex;
-    gap:        0;
-    flex:       1 1 auto;
-    min-height: 0;
-    padding:    12px;
-    overflow:   hidden;
-  }
-
-  &__editor {
-    display:        flex;
-    flex-direction: column;
-    // width comes from the inline editorWidth%; don't let a wide preview (a full dashboard render)
-    // shrink the editor past it — the preview (min-width:0, overflow:auto) absorbs + scrolls instead.
-    flex:           0 0 auto;
-    min-width:      280px;
-    border:         1px solid var(--border);
-    border-radius:  var(--border-radius);
-    overflow:       hidden;
-  }
-
-  &__resizer {
-    flex:          0 0 8px;
-    margin:        0 2px;
-    cursor:        col-resize;
-    border-radius: 4px;
-    background:    var(--border);
-    user-select:   none;
-    touch-action:  none;
-
-    &:hover {
-      background: var(--primary);
-    }
-  }
-
-  &__code {
-    flex:        1 1 auto;
-    min-height:  180px;
-    border:      none;
-    padding:     10px;
-    font-family: monospace;
-    font-size:   12px;
-    resize:      none;
-    background:  var(--body-bg);
-    color:       var(--body-text);
-  }
-
-  &__chat {
-    height:     45%;
-    min-height: 220px;
-    border-top: 1px solid var(--border);
-    overflow:   hidden;
-  }
-
-  &__preview {
-    flex:          1 1 auto;
-    min-width:     0;
-    border:        1px solid var(--border);
-    border-radius: var(--border-radius);
-    overflow:      auto;
+  &__surface {
+    padding: 12px 16px;
   }
 }
 </style>
