@@ -57,14 +57,24 @@ data:
     import { Banner } from '@components/Banner';
     import { Card } from '@components/Card';
     import { RcButton } from '@components/RcButton';
+    import { BadgeState } from '@components/BadgeState';
     export default {
-      components: { Banner, Card, RcButton },
+      components: {
+        Banner, Card, RcButton, BadgeState
+      },
       created() {
         this.$store.dispatch('management/findAll', { type: 'management.cattle.io.cluster' })
           .then((rows) => { this.rows = rows || []; })
           .catch(() => { this.rows = []; });
       },
       data() { return { rows: [] }; },
+      computed: {
+        // Ready clusters first — only they can open the workload dashboard (the cluster route bounces
+        // unavailable ones back Home), so lead with the ones the buttons actually work for.
+        sorted() {
+          return [...this.rows].sort((a, b) => (Number(b.isReady) - Number(a.isReady)) || (a.nameDisplay || '').localeCompare(b.nameDisplay || ''));
+        },
+      },
       methods: {
         workloadsLink(c) {
           return { name: 'c-cluster-explorer-workload-dashboard', params: { cluster: c.id } };
@@ -75,10 +85,10 @@ data:
     <template>
       <div class="app-home">
         <h1 class="mb-20">Your Apps</h1>
-        <Banner color="info" label="Jump straight into the workloads of any cluster." />
+        <Banner color="info" label="Jump straight into the workloads of any ready cluster." />
         <div class="grid">
           <Card
-            v-for="c in rows"
+            v-for="c in sorted"
             :key="c.id"
             class="app-card"
             :show-highlight-border="false"
@@ -86,9 +96,11 @@ data:
           >
             <template #title>
               <span class="app-card__name">{{ c.nameDisplay || c.metadata.name }}</span>
+              <BadgeState :value="c" class="app-card__state" />
             </template>
             <template #body>
-              <RcButton variant="primary" :to="workloadsLink(c)">Workloads →</RcButton>
+              <RcButton v-if="c.isReady" variant="primary" :to="workloadsLink(c)">Workloads →</RcButton>
+              <RcButton v-else variant="secondary" disabled :title="(c.nameDisplay || c.metadata.name) + ' is ' + c.stateDisplay">{{ c.stateDisplay }}</RcButton>
             </template>
           </Card>
         </div>
@@ -97,7 +109,7 @@ data:
     <style scoped>
       .app-home { padding: 24px; }
       .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 16px; }
-      .app-card__name { font-weight: 600; }
+      .app-card__name { font-weight: 600; margin-right: 8px; }
     </style>
 ---
 apiVersion: v1

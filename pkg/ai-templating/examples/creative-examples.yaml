@@ -498,9 +498,12 @@ data:
     <script>
     import { Banner } from '@components/Banner';
     import { RcButton } from '@components/RcButton';
+    import { BadgeState } from '@components/BadgeState';
     import { LabeledInput } from '@components/Form/LabeledInput';
     export default {
-      components: { Banner, RcButton, LabeledInput },
+      components: {
+        Banner, RcButton, BadgeState, LabeledInput
+      },
       created() {
         this.$store.dispatch('management/findAll', { type: 'management.cattle.io.cluster' })
           .then((rows) => { this.rows = rows || []; }).catch(() => { this.rows = []; });
@@ -509,12 +512,19 @@ data:
       computed: {
         filtered() {
           const q = this.q.trim().toLowerCase();
-          if (!q) { return this.rows; }
-          return this.rows.filter((c) => (c.nameDisplay || c.metadata.name || '').toLowerCase().includes(q));
+          const list = q ? this.rows.filter((c) => (c.nameDisplay || c.metadata.name || '').toLowerCase().includes(q)) : this.rows;
+
+          // Ready clusters first (they are the ones you can actually jump into), then by name.
+          return [...list].sort((a, b) => (Number(b.isReady) - Number(a.isReady)) || (a.nameDisplay || '').localeCompare(b.nameDisplay || ''));
         },
+        readyCount() { return this.rows.filter((c) => c.isReady).length; },
       },
       methods: {
-        open(c) { this.$router.push({ name: 'c-cluster-explorer', params: { cluster: c.id } }); },
+        open(c) {
+          // Only ready clusters are reachable — the cluster route bounces unavailable ones back Home.
+          if (!c.isReady) { return; }
+          this.$router.push({ name: 'c-cluster-explorer', params: { cluster: c.id } });
+        },
       },
     };
     </script>
@@ -522,7 +532,7 @@ data:
       <div class="ln">
         <div class="ln__hero">
           <h1 class="ln__title">Where to?</h1>
-          <Banner color="info" :label="rows.length + ' cluster(s) at your command — filter and jump in.'" />
+          <Banner color="info" :label="readyCount + ' of ' + rows.length + ' cluster(s) ready — filter and jump in.'" />
           <LabeledInput v-model:value="q" class="ln__input" placeholder="Type to filter clusters…" />
         </div>
         <div class="ln__grid">
@@ -531,10 +541,12 @@ data:
             :key="c.id"
             variant="secondary"
             class="ln__card"
+            :disabled="!c.isReady"
+            :title="c.isReady ? 'Open ' + (c.nameDisplay || c.metadata.name) : (c.nameDisplay || c.metadata.name) + ' is ' + c.stateDisplay"
             @click="open(c)"
           >
             <span class="ln__name">{{ c.nameDisplay || c.metadata.name }}</span>
-            <span class="ln__go">Open →</span>
+            <BadgeState :value="c" class="ln__state" />
           </RcButton>
         </div>
         <div v-if="!filtered.length" class="ln__none text-muted">No clusters match “{{ q }}”.</div>
@@ -545,10 +557,9 @@ data:
       .ln__hero { max-width: 640px; margin: 0 auto 28px; text-align: center; }
       .ln__title { font-size: 30px; margin-bottom: 14px; }
       .ln__input { margin-top: 14px; text-align: left; }
-      .ln__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; max-width: 900px; margin: 0 auto; }
-      .ln__card { display: flex; align-items: center; justify-content: space-between; width: 100%; }
-      .ln__name { font-weight: 600; }
-      .ln__go { color: var(--primary); }
+      .ln__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; max-width: 900px; margin: 0 auto; }
+      .ln__card { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 8px; }
+      .ln__name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .ln__none { text-align: center; margin-top: 20px; }
     </style>
 ---
