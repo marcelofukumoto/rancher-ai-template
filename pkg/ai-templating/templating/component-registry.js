@@ -25,8 +25,6 @@
 //   import Banner, { Banner } from '@components/Banner'      (@components dir, default+named)
 //   import { RcDropdown, RcDropdownItem } from '@components/RcDropdown'  (multiple named)
 
-import PkgTemplateOverview from '../components/TemplateOverview.vue';
-import PkgTemplateResourceList from '../components/TemplateResourceList.vue';
 import Accordion from '@components/Accordion/Accordion.vue';
 import BadgeState from '@components/BadgeState/BadgeState.vue';
 import Banner from '@components/Banner/Banner.vue';
@@ -823,11 +821,11 @@ import * as S_utils_width from '@shell/utils/width';
 import * as S_utils_window from '@shell/utils/window';
 import * as S_utils_xccdf from '@shell/utils/xccdf';
 
-const ctx = require.context('@shell/components', true, /^(?:(?!__tests__).)*\.vue$/);
+var ctx = require.context('@shell/components', true, /^(?:(?!__tests__).)*\.vue$/);
 
 // [import path, namespace module] for every explicitly-exposed @shell util. Registered by
 // full path only (utils are imported by path + named export, never a bare name).
-const SHELL_MODULES = [
+var SHELL_MODULES = [
   ['@shell/chart/example', S_chart_example],
   ['@shell/chart/gatekeeper', S_chart_gatekeeper],
   ['@shell/chart/istio', S_chart_istio],
@@ -1586,7 +1584,7 @@ const SHELL_MODULES = [
 // [name, source path, component] for every @components export. The path is the real
 // .vue location; the DIRECTORY of that path is the package import path used in real code
 // (e.g. '@components/Banner', '@components/Form/LabeledInput').
-const RANCHER_COMPONENTS = [
+var RANCHER_COMPONENTS = [
   ['Accordion', '@components/Accordion/Accordion.vue', Accordion],
   ['BadgeState', '@components/BadgeState/BadgeState.vue', BadgeState],
   ['Banner', '@components/Banner/Banner.vue', Banner],
@@ -1629,60 +1627,93 @@ const RANCHER_COMPONENTS = [
 //   import Banner from '@components/Banner'   and   import { Banner } from '@components/Banner'
 // work. __esModule makes the loader's default-interop unwrap .default (else a default
 // import would be the namespace object and Vue warns "missing render").
-const EXTRA = {};
-const dirExports = {};
+// The registry map is built LAZILY, on first lookup, and cached in a `var`.
+//
+// This is load-bearing, not a style choice. In a production build webpack scope-hoists this module
+// together with sfc-loader, and a circular import left the concatenated body unfinished: the hoisted
+// function declarations (hasComponent/resolveComponent) stayed callable while a `const` map sat
+// forever in the temporal dead zone, so EVERY custom-view import died with "Cannot access 'EXTRA'
+// before initialization" and no code template could compile. A `var` + build-on-first-use has no
+// TDZ, so a lookup can never observe a half-initialized module.
+var extraCache = null; // eslint-disable-line no-var, vars-on-top
 
-RANCHER_COMPONENTS.forEach(([name, filePath, comp]) => {
-  const single = {
-    __esModule: true, default: comp, [name]: comp
-  };
-  const dir = filePath.replace(/\/[^/]+\.vue$/, '');
+function buildExtra() {
+  if (extraCache) {
+    return extraCache;
+  }
 
-  EXTRA[name] = single;
-  EXTRA[filePath] = single;
-  EXTRA[filePath.replace(/\.vue$/, '')] = single;
+  const EXTRA = {};
+  const dirExports = {};
 
-  // Accumulate named exports per package dir (a dir may hold several components).
-  dirExports[dir] = dirExports[dir] || {};
-  dirExports[dir][name] = comp;
-});
+  RANCHER_COMPONENTS.forEach(([name, filePath, comp]) => {
+    const single = {
+      __esModule: true, default: comp, [name]: comp
+    };
+    const dir = filePath.replace(/\/[^/]+\.vue$/, '');
 
-Object.entries(dirExports).forEach(([dir, comps]) => {
-  const dirName = dir.split('/').pop();
+    EXTRA[name] = single;
+    EXTRA[filePath] = single;
+    EXTRA[filePath.replace(/\.vue$/, '')] = single;
 
-  EXTRA[dir] = {
-    __esModule: true, ...comps, default: comps[dirName] || Object.values(comps)[0]
-  };
-});
+    // Accumulate named exports per package dir (a dir may hold several components).
+    dirExports[dir] = dirExports[dir] || {};
+    dirExports[dir][name] = comp;
+  });
 
-// Register each explicitly-exposed @shell module under its real import path, as an ES-module
-// namespace so `import { fn } from '@shell/utils/x'` (or `import X from '@shell/edit/pod'`)
-// resolves. The generated paths are extension-less; also register the .vue/.js/.ts variants so
-// an import that includes the file extension (e.g. '@shell/pages/.../Foo.vue') still resolves.
-SHELL_MODULES.forEach(([path, mod]) => {
-  const ns = { __esModule: true, ...mod };
+  Object.entries(dirExports).forEach(([dir, comps]) => {
+    const dirName = dir.split('/').pop();
 
-  EXTRA[path] = ns;
-  EXTRA[`${ path }.vue`] = ns;
-  EXTRA[`${ path }.js`] = ns;
-  EXTRA[`${ path }.ts`] = ns;
-});
+    EXTRA[dir] = {
+      __esModule: true, ...comps, default: comps[dirName] || Object.values(comps)[0]
+    };
+  });
 
-// Expose this extension's own widget components so custom views can import them. The original
-// templating-for-ai templates (e.g. Cluster Overview) import these by the @shell/pages path they
-// used to live at, so register those keys too.
-[
-  ['TemplateOverview', PkgTemplateOverview],
-  ['TemplateResourceList', PkgTemplateResourceList],
-].forEach(([name, comp]) => {
-  const ns = { __esModule: true, default: comp };
+  // Register each explicitly-exposed @shell module under its real import path, as an ES-module
+  // namespace so `import { fn } from '@shell/utils/x'` (or `import X from '@shell/edit/pod'`)
+  // resolves. The generated paths are extension-less; also register the .vue/.js/.ts variants so
+  // an import that includes the file extension (e.g. '@shell/pages/.../Foo.vue') still resolves.
+  SHELL_MODULES.forEach(([path, mod]) => {
+    const ns = { __esModule: true, ...mod };
 
-  EXTRA[name] = ns;
-  EXTRA[`@shell/pages/c/_cluster/_template/${ name }`] = ns;
-  EXTRA[`@shell/pages/c/_cluster/_template/${ name }.vue`] = ns;
-});
+    EXTRA[path] = ns;
+    EXTRA[`${ path }.vue`] = ns;
+    EXTRA[`${ path }.js`] = ns;
+    EXTRA[`${ path }.ts`] = ns;
+  });
 
-let keyMap = null;
+  // This extension's own widget components, so custom views can import them. Pulled in with
+  // require() rather than a static import ON PURPOSE: a static import of ../components/* makes this
+  // module depend on the package's main chunk, which depends back on the registry — the very cycle
+  // that broke the build. require() defers that edge to first lookup, long after both have loaded.
+  const own = [];
+
+  try {
+    // eslint-disable-next-line global-require
+    own.push(['TemplateOverview', interop(require('../components/TemplateOverview.vue'))]);
+    // eslint-disable-next-line global-require
+    own.push(['TemplateResourceList', interop(require('../components/TemplateResourceList.vue'))]);
+  } catch (e) {
+    // Never let a widget failing to load stop the whole registry from building.
+  }
+
+  own.forEach(([name, comp]) => {
+    const ns = { __esModule: true, default: comp };
+
+    EXTRA[name] = ns;
+    EXTRA[`@shell/pages/c/_cluster/_template/${ name }`] = ns;
+    EXTRA[`@shell/pages/c/_cluster/_template/${ name }.vue`] = ns;
+  });
+
+  extraCache = EXTRA;
+
+  return extraCache;
+}
+
+function interop(mod) {
+  return mod && mod.__esModule ? mod.default : mod;
+}
+
+var keyMap = null;
 
 // Build import-id -> context key WITHOUT executing any module.
 function buildKeyMap() {
@@ -1716,13 +1747,15 @@ function buildKeyMap() {
 }
 
 export function hasComponent(id) {
-  return typeof id === 'string' && (id in EXTRA || id in buildKeyMap());
+  return typeof id === 'string' && (id in buildExtra() || id in buildKeyMap());
 }
 
 // Returns the requested module namespace (with .default), executing only that one module.
 export function resolveComponent(id) {
-  if (id in EXTRA) {
-    return EXTRA[id];
+  const extra = buildExtra();
+
+  if (id in extra) {
+    return extra[id];
   }
 
   const key = id in buildKeyMap() ? buildKeyMap()[id] : null;
