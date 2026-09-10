@@ -57,6 +57,11 @@ export default {
         this.compiled = markRaw(component);
         this.styles = styles;
       } catch (e) {
+        // Log the whole error, not just the message. When a compile fails the useful part is the
+        // STACK — which module actually blew up — and a failure inside the component registry's own
+        // import graph shows up here as a confusing downstream symptom with no hint of the cause.
+        // eslint-disable-next-line no-console
+        console.error('[ai-templating] custom view failed to compile', e);
         this.error = e?.message || String(e);
         this.compiled = null;
       } finally {

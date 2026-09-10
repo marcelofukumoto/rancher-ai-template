@@ -1642,6 +1642,17 @@ function buildExtra() {
     return extraCache;
   }
 
+  // If a statically imported @shell module throws while IT initialises, this module's body stops
+  // there: the hoisted function declarations below stay callable, but these arrays are never
+  // assigned. Say so plainly instead of dying with "cannot read 'forEach' of undefined", which
+  // hides the real failure several layers upstream.
+  if (!SHELL_MODULES || !RANCHER_COMPONENTS) {
+    throw new Error(
+      'component-registry did not finish initialising — a module it statically imports threw while ' +
+      'loading. The original error is logged above/earlier in the console.'
+    );
+  }
+
   const EXTRA = {};
   const dirExports = {};
 
