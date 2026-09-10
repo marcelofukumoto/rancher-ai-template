@@ -4,7 +4,7 @@ product:
 aiTemplating:
   settings:
     label: Settings
-  canvas:
-    label: Blank Canvas
   templates:
-    label: Templates
+    label: Home Templates
+  layouts:
+    label: Home Layouts

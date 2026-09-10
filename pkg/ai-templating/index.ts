@@ -1,7 +1,7 @@
 import { importTypes } from '@rancher/auto-import';
 import { IPlugin } from '@shell/core/types';
 import HomeLayout from '@shell/components/templates/home.vue';
-import { loadCustomViews, toggleTemplating } from './templating/template-engine';
+import { fetchTemplatingConfigMaps, toggleTemplating } from './templating/template-engine';
 import { ensureInstalled } from './install/ensure';
 import routing from './routing/index';
 import Home from './pages/Home.vue';
@@ -82,7 +82,7 @@ export default function(plugin: IPlugin): void {
   plugin.addRoutes(routing);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  plugin.addNavHooks({ onEnter: (store: any) => loadCustomViews(store) });
+  plugin.addNavHooks({ onEnter: (store: any) => fetchTemplatingConfigMaps(store) });
 
   // Retry until the live router exists (plugin init can run before $globalApp is set).
   const tryInstall = () => {
@@ -93,10 +93,10 @@ export default function(plugin: IPlugin): void {
 
   tryInstall();
 
-  // Auto-install the extension's cluster dependencies (CRDs + AIAgentConfig agents + a default
-  // template) once the management store is ready. Idempotent + admin-gated (see ensureInstalled).
-  // Then load custom views once eagerly: cluster-scoped views register into the `explorer` product,
-  // so they show up in a cluster's navbar even if the user never opens the AI Templating product.
+  // Auto-install the extension's cluster dependencies (AIAgentConfig agents + a default Home
+  // template + config) once the management store is ready. Idempotent + admin-gated (see
+  // ensureInstalled). Then eagerly fetch the templating ConfigMaps so a hard load of /home has the
+  // applied-Home config ready to render.
   const tryEnsure = () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const app = (window as any).$globalApp;
@@ -104,7 +104,7 @@ export default function(plugin: IPlugin): void {
     if (app?.$store?.state?.managementReady) {
       Promise.resolve(ensureInstalled(app.$store))
         .catch(() => {})
-        .finally(() => loadCustomViews(app.$store));
+        .finally(() => fetchTemplatingConfigMaps(app.$store));
     } else {
       setTimeout(tryEnsure, 500);
     }

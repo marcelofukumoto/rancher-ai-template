@@ -58,7 +58,7 @@ export default {
     },
 
     // Human-facing name for the agent persona, shown in the chat UI (role label, placeholder, hint).
-    // The Home editor uses "Home Editor"; the Blank Canvas passes the code-builder's name.
+    // The Home editor uses "Home Editor"; the JSON template editor passes the JSON builder's name.
     personaLabel: {
       type:    String,
       default: 'Home Editor',

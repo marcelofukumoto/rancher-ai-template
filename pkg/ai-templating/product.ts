@@ -1,13 +1,11 @@
 import { IPlugin } from '@shell/core/types';
 import { BLANK_CLUSTER } from '@shell/store/store-types.js';
-import {
-  PRODUCT_NAME, EXPLORER_PRODUCT, ROUTE_SETTINGS, ROUTE_TEMPLATES, ROUTE_CANVAS, ROUTE_CLUSTER_CANVAS
-} from './templating/template-engine';
+import { PRODUCT_NAME, ROUTE_SETTINGS, ROUTE_TEMPLATES, ROUTE_LAYOUTS } from './templating/template-engine';
 
 // The "AI Templating" product — a TOP-LEVEL global product (like Continuous Delivery / Cluster
-// Management): inStore 'management', no cluster switcher. Templates are stored as labeled ConfigMaps
-// (not a CRD), so there are no CR-type resource lists — just Settings + Blank Canvas; the dynamic
-// RENDERED custom-view pages are added at runtime by the engine (index.ts onEnter nav hook).
+// Management): inStore 'management', no cluster switcher. It is focused solely on the configurable
+// Home: Settings (the kill switch), Home Templates (the panel building blocks) and Home Layouts (the
+// assembled dashboards). Everything is stored as labeled ConfigMaps (not a CRD).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function init($extension: IPlugin, store: any): void {
   const { product, virtualType, basicType } = $extension.DSL(store, PRODUCT_NAME);
@@ -34,18 +32,7 @@ export function init($extension: IPlugin, store: any): void {
     route:      { name: ROUTE_SETTINGS, params: { cluster: BLANK_CLUSTER } },
   });
 
-  // Blank Canvas — a fast live-authoring scratchpad.
-  virtualType({
-    labelKey:   'aiTemplating.canvas.label',
-    name:       'ai-templating-canvas',
-    namespaced: false,
-    icon:       'compass',
-    weight:     104,
-    exact:      true,
-    route:      { name: ROUTE_CANVAS, params: { cluster: BLANK_CLUSTER } },
-  });
-
-  // Templates — a list of every custom view + Home template ConfigMap.
+  // Home Templates — the panel building blocks (home-template ConfigMaps).
   virtualType({
     labelKey:   'aiTemplating.templates.label',
     name:       'ai-templating-templates',
@@ -56,21 +43,16 @@ export function init($extension: IPlugin, store: any): void {
     route:      { name: ROUTE_TEMPLATES, params: { cluster: BLANK_CLUSTER } },
   });
 
-  basicType(['ai-templating-templates', 'ai-templating-settings', 'ai-templating-canvas']);
-
-  // Also surface the Blank Canvas editor INSIDE every cluster (the core `explorer` product), so
-  // cluster-scoped views can be authored where the cluster is loaded and previews show real data.
-  // Registered statically here (not from the runtime engine) so it's present before the nav builds.
-  const explorer = $extension.DSL(store, EXPLORER_PRODUCT);
-
-  explorer.virtualType({
-    labelKey:   'aiTemplating.canvas.label',
-    name:       'ai-templating-cluster-canvas',
+  // Home Layouts — the assembled Home VIEWS (panels + their organizer/template trees).
+  virtualType({
+    labelKey:   'aiTemplating.layouts.label',
+    name:       'ai-templating-layouts',
     namespaced: false,
-    icon:       'compass',
-    weight:     -5,
+    icon:       'list-grouped',
+    weight:     106,
     exact:      true,
-    route:      { name: ROUTE_CLUSTER_CANVAS },
+    route:      { name: ROUTE_LAYOUTS, params: { cluster: BLANK_CLUSTER } },
   });
-  explorer.basicType(['ai-templating-cluster-canvas'], 'root'); // 'root' = top-level cluster nav
+
+  basicType(['ai-templating-layouts', 'ai-templating-templates', 'ai-templating-settings']);
 }

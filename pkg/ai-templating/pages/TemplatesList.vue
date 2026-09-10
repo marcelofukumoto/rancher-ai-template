@@ -7,13 +7,14 @@ import ResourceTable from '@shell/components/ResourceTable.vue';
 import { Checkbox } from '@components/Form/Checkbox';
 import { NAME, NAMESPACE, AGE } from '@shell/config/table-headers';
 import {
-  CONFIGMAP, LABEL_MARKER, LABEL_TYPE, TYPE_CONFIG, TYPE_HOME,
+  CONFIGMAP, LABEL_MARKER, LABEL_TYPE, TYPE_HOME,
   isTemplatingEnabled, toggleTemplating, fetchTemplatingConfigMaps
 } from '../templating/template-engine';
 
-// A management list of the ConfigMaps that back AI Templating (custom views + Home templates).
-// Rows are REAL ConfigMap resources, so their standard row actions (Edit YAML/Config, Clone, Delete,
-// Download) and the name link work with no extra code. The Enabled toggle is the global kill switch.
+// A management list of the Home template ConfigMaps that back the configurable Home (the panel
+// building blocks). Rows are REAL ConfigMap resources, so their standard row actions (Edit
+// YAML/Config, Clone, Delete, Download) and the name link work with no extra code. The Enabled
+// toggle is the global kill switch.
 const store = useStore();
 const loading = ref(true);
 const toggling = ref(false);
@@ -34,31 +35,17 @@ const rows = computed(() => {
     return [];
   }
 
-  // Live store list (not a snapshot) so the table stays in sync as ConfigMaps change. Show the
-  // template ConfigMaps (custom views + Home templates), not the config singleton.
+  // Live store list (not a snapshot) so the table stays in sync as ConfigMaps change. Show only the
+  // Home template ConfigMaps (not the config/home singletons).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return store.getters['management/all'](CONFIGMAP).filter((cm: any) => {
     const labels = cm.metadata?.labels || {};
 
-    return labels[LABEL_MARKER] === 'true' && labels[LABEL_TYPE] !== TYPE_CONFIG;
+    return labels[LABEL_MARKER] === 'true' && labels[LABEL_TYPE] === TYPE_HOME;
   });
 });
 
-// Rancher's convention for a label column: a `metadata.labels."<key>"` path (see SortableTable
-// filtering). Sort/search use the raw label; the cell slot renders friendly text.
-const TYPE = {
-  name:  'templateType',
-  label: 'Type',
-  value: `metadata.labels."${ LABEL_TYPE }"`,
-  sort:  [`metadata.labels."${ LABEL_TYPE }"`],
-  width: 150,
-};
-
-const headers = [NAME, TYPE, NAMESPACE, AGE];
-
-function typeLabel(row: any): string {
-  return row?.metadata?.labels?.[LABEL_TYPE] === TYPE_HOME ? 'Home Template' : 'Custom View';
-}
+const headers = [NAME, NAMESPACE, AGE];
 
 async function onToggle(value: boolean) {
   if (toggling.value) {
@@ -71,7 +58,7 @@ async function onToggle(value: boolean) {
 
     store.dispatch('growl/success', {
       title:   'AI Templating',
-      message: now ? 'Templating enabled — custom views and custom Home are active.' : 'Templating disabled — Rancher ignores all templates and behaves like stock.',
+      message: now ? 'Templating enabled — the custom Home is active.' : 'Templating disabled — Rancher ignores all templates and behaves like stock.',
     }, { root: true });
   } catch (e: any) {
     store.dispatch('growl/error', { title: 'Could not change templating', message: e?.message || String(e) }, { root: true });
@@ -84,12 +71,12 @@ async function onToggle(value: boolean) {
 <template>
   <div class="templates-list">
     <h1 class="mb-10">
-      Templates
+      Home Templates
     </h1>
     <p class="text-muted mb-20">
-      ConfigMaps labelled <code>{{ LABEL_MARKER }}=true</code> that define custom views and Home
-      templates. Use a row's actions to edit its YAML — views update live as you create, edit, or
-      delete them. Author them visually in the <b>Blank Canvas</b> and <b>Home</b> editors.
+      The <code>{{ LABEL_TYPE }}={{ TYPE_HOME }}</code> ConfigMaps that define the panel building
+      blocks for the configurable Home. Use a row's actions to edit its YAML — the Home updates live
+      as you create, edit, or delete them. Author them visually in the <b>Home</b> editor.
     </p>
 
     <div
@@ -99,7 +86,7 @@ async function onToggle(value: boolean) {
       <Checkbox
         :value="enabled"
         :disabled="toggling"
-        label="Custom view templating enabled"
+        label="Custom Home templating enabled"
         data-testid="ai-templating-enabled-toggle"
         @update:value="onToggle"
       />
@@ -117,11 +104,7 @@ async function onToggle(value: boolean) {
       :loading="loading"
       :namespaced="true"
       data-testid="ai-templating-templates-table"
-    >
-      <template #cell:templateType="{ row }">
-        {{ typeLabel(row) }}
-      </template>
-    </ResourceTable>
+    />
     <div
       v-else
       class="text-error"

@@ -2,9 +2,9 @@
 import { Checkbox } from '@components/Form/Checkbox';
 import { isTemplatingEnabled, toggleTemplating, fetchTemplatingConfigMaps } from '../templating/template-engine';
 
-// AI Templating settings — the global kill switch. Always reachable (even when off) so the
-// feature can be turned back on. Templates are stored as labeled ConfigMaps and authored in the
-// Blank Canvas / Home editors.
+// AI Templating settings — the global kill switch for the custom Home. Always reachable (even when
+// off) so the feature can be turned back on. Home templates are stored as labeled ConfigMaps and
+// authored in the Home editor.
 export default {
   name:       'AiTemplatingSettings',
   components: { Checkbox },
@@ -56,8 +56,8 @@ export default {
       AI Templating
     </h1>
     <p class="text-muted mb-20">
-      Custom views and Home templates are stored as labeled <code>ConfigMap</code>s and authored in
-      the <b>Blank Canvas</b> and <b>Home</b> editors (with the AI assistant).
+      The configurable Home and its templates are stored as labeled <code>ConfigMap</code>s and
+      authored in the <b>Home</b> editor (with the AI assistant).
     </p>
 
     <div
@@ -67,12 +67,12 @@ export default {
       <Checkbox
         :value="enabled"
         :disabled="toggling"
-        label="Custom view templating enabled"
+        label="Custom Home templating enabled"
         @update:value="onToggle"
       />
       <p class="text-muted mt-5 mb-0">
-        When off, Rancher ignores every custom view and Home template and behaves like stock Rancher.
-        This page stays available so you can turn it back on.
+        When off, Rancher ignores every Home template and behaves like stock Rancher. This page stays
+        available so you can turn it back on.
       </p>
     </div>
   </div>
