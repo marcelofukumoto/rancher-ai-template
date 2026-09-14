@@ -4,7 +4,9 @@
 //
 //   VIEW       a page (the Home is a VIEW). Holds one or more PANELS.
 //   PANEL      one screen of a view. When a view has more than one PANEL they render as TABS.
-//              Every panel has a ROOT ORGANIZER that always fills it (100% x 100%).
+//              A LAYOUT panel has a ROOT ORGANIZER that always fills it (100% x 100%); a STOCK
+//              panel has no layout at all and renders Rancher's own Home, so a view can mix the
+//              real Home in as a tab beside templated ones.
 //   ORGANIZER  a row. It is ALWAYS the full width of whatever contains it, and lays its children out
 //              on a 12-COLUMN grid. Organizers stack top-to-bottom and may nest (a nested organizer
 //              takes a whole row of its parent, which is what keeps "always 100% wide" true).
@@ -19,6 +21,14 @@
 /** Node types allowed in a panel's tree. */
 export const NODE_ORGANIZER = 'organizer';
 export const NODE_TEMPLATE = 'template';
+
+/**
+ * A PANEL is either a layout (a root organizer of templates) or the STOCK Rancher home rendered
+ * as-is. A stock panel has no organizer and nothing to configure — it exists so a view can mix the
+ * real Home in as one tab alongside templated ones.
+ */
+export const PANEL_LAYOUT = 'layout';
+export const PANEL_STOCK = 'stock';
 
 /** Organizers lay their children out on this many columns. */
 export const GRID_COLUMNS = 12;
@@ -137,6 +147,18 @@ export function newPanel(name) {
   };
 }
 
+/** A new STOCK panel: renders the real Rancher home, with no layout of its own. */
+export function newStockPanel(name) {
+  return {
+    id: uid('panel'), name: name || 'Home', kind: PANEL_STOCK
+  };
+}
+
+/** True when a panel renders the stock Rancher home rather than a template layout. */
+export function isStockPanel(panel) {
+  return panel?.kind === PANEL_STOCK;
+}
+
 /** A new empty VIEW — one panel. */
 export function emptyView() {
   return { panels: [newPanel('Home')] };
@@ -237,6 +259,13 @@ function asRoot(node) {
 }
 
 function normalizePanel(panel) {
+  // A stock panel carries no organizer — there is nothing to lay out.
+  if (isStockPanel(panel)) {
+    return {
+      id: panel?.id || uid('panel'), name: panel?.name || 'Home', kind: PANEL_STOCK
+    };
+  }
+
   return {
     id:        panel?.id || uid('panel'),
     name:      panel?.name || 'Panel',

@@ -6,7 +6,7 @@ import {
   isTemplatingEnabled, appliedViewScopes, saveView, savedHomeTemplates, fetchTemplatingConfigMaps
 } from '../templating/template-engine';
 import {
-  NODE_TEMPLATE, GRID_COLUMNS, emptyView, newPanel, newOrganizer, newTemplateNode,
+  NODE_TEMPLATE, GRID_COLUMNS, emptyView, newPanel, newStockPanel, isStockPanel, newOrganizer, newTemplateNode,
   findNode, findParent, addChild, removeNode, moveNode, moveNodeTo, updateNode, setColSpan, tidyRoot,
   pathToNode
 } from '../templating/view-model';
@@ -127,6 +127,12 @@ export default {
       return this.panels.find((p) => p.id === this.activePanelId) || this.panels[0] || null;
     },
 
+    // A STOCK panel renders Rancher's own Home and has no layout, so there is no organizer tree
+    // and nothing for the editor's controls to act on.
+    activeIsStock() {
+      return isStockPanel(this.activePanel);
+    },
+
     rootOrganizer() {
       return this.activePanel?.organizer || null;
     },
@@ -137,7 +143,7 @@ export default {
     },
 
     hasContent() {
-      return !!this.rootOrganizer?.children?.length;
+      return this.activeIsStock || !!this.rootOrganizer?.children?.length;
     },
 
     // True when the working draft differs from the last-published state for this scope.
@@ -422,12 +428,14 @@ export default {
       this.selectedNodeId = this.panels.find((p) => p.id === id)?.organizer?.id || null;
     },
 
-    addPanel() {
-      const panel = newPanel(`Panel ${ this.working.panels.length + 1 }`);
+    // `kind` is 'layout' (a root organizer of templates) or 'stock' (Rancher's own Home as a tab).
+    addPanel(kind) {
+      const layout = kind !== 'stock';
+      const panel = layout ? newPanel(`Panel ${ this.working.panels.length + 1 }`) : newStockPanel('Home');
 
       this.working.panels.push(panel);
       this.activePanelId = panel.id;
-      this.selectedNodeId = panel.organizer.id;
+      this.selectedNodeId = panel.organizer?.id || null;
     },
 
     renamePanel(panel) {
@@ -554,14 +562,22 @@ export default {
               @click.stop="removePanel(p.id)"
             />
           </button>
-          <button
+          <select
             v-if="editing"
             class="ai-home__tab ai-home__tab--add"
-            title="Add panel"
-            @click="addPanel"
+            title="Add a panel"
+            @change="addPanel($event.target.value); $event.target.value = ''"
           >
-            <i class="icon icon-plus" />
-          </button>
+            <option value="">
+              ＋
+            </option>
+            <option value="layout">
+              Layout panel (templates)
+            </option>
+            <option value="stock">
+              Stock Rancher Home
+            </option>
+          </select>
         </div>
 
         <template v-if="editing">
@@ -586,6 +602,7 @@ export default {
           </div>
 
           <select
+            v-if="!activeIsStock"
             class="ai-home__add"
             :disabled="!templateOptions.length"
             title="Add a template into the selected organizer"
@@ -604,6 +621,7 @@ export default {
           </select>
 
           <button
+            v-if="!activeIsStock"
             class="btn btn-sm role-secondary"
             title="Add an organizer (a full-width row) into the selected organizer"
             @click="addOrganizer"
@@ -612,6 +630,7 @@ export default {
           </button>
 
           <select
+            v-if="!activeIsStock"
             class="ai-home__add"
             title="Create a new template (opens a blank editor; saves only when you click Save)"
             @change="newTemplate($event.target.value); $event.target.value = ''"
@@ -676,7 +695,7 @@ export default {
 
       <!-- Properties of the selected node: size + padding accept px numbers or CSS values like 100%. -->
       <div
-        v-if="editing && selectedNode"
+        v-if="editing && selectedNode && !activeIsStock"
         class="ai-home__props"
       >
         <!-- Ancestor breadcrumb — the only reliable way to reach a parent organizer (and the panel
@@ -760,8 +779,10 @@ export default {
         class="ai-home__surface"
         @mouseleave="ui.hoverId = null"
       >
+        <!-- A STOCK panel is Rancher's own Home, dropped in as a tab — no layout, nothing to edit. -->
+        <StockHome v-if="activeIsStock" />
         <OrganizerNode
-          v-if="rootOrganizer"
+          v-else-if="rootOrganizer"
           :key="rootOrganizer.id"
           :node="rootOrganizer"
           :editing="editing"

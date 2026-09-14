@@ -4,7 +4,7 @@ import {
   appliedViewScopes, savedHomeTemplates, templateByName, fetchTemplatingConfigMaps,
   getHomeConfig, saveHomeConfig, ROUTE_SETTINGS
 } from '../templating/template-engine';
-import { NODE_TEMPLATE } from '../templating/view-model';
+import { NODE_TEMPLATE, isStockPanel } from '../templating/view-model';
 import { BLANK_CLUSTER } from '@shell/store/store-types.js';
 
 // Lists the assembled Home VIEWS — their PANELS (which render as tabs) and, per panel, the tree of
@@ -77,6 +77,10 @@ export default {
       const k = templateByName(this.$store.getters, name).kind;
 
       return k === 'json' ? 'JSON' : (k === 'code' ? 'Code' : 'missing');
+    },
+
+    isStock(panel) {
+      return isStockPanel(panel);
     },
 
     // Flatten a panel's organizer tree into indented rows for display.
@@ -235,9 +239,24 @@ export default {
         >
           <div class="home-layouts__tab-head">
             <span class="home-layouts__tab-name">{{ panel.name }}</span>
+            <span
+              v-if="isStock(panel)"
+              class="text-muted"
+            >stock</span>
           </div>
 
-          <table class="home-layouts__panels">
+          <!-- A stock panel renders Rancher's own Home; it has no layout to list. -->
+          <div
+            v-if="isStock(panel)"
+            class="text-muted home-layouts__empty"
+          >
+            Rancher's own Home, shown as a tab. Nothing to configure.
+          </div>
+
+          <table
+            v-else
+            class="home-layouts__panels"
+          >
             <thead>
               <tr>
                 <th>Structure</th>
