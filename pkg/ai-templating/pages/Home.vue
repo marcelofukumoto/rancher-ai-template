@@ -879,12 +879,14 @@ export default {
     flex: 1 1 auto;
   }
 
+  // Pinned to the viewport and ALWAYS full height, so the panel reaches the bottom of the screen
+  // instead of stopping wherever its content happens to end. Its own content scrolls inside it.
   &__sidebar {
     background:    var(--box-bg);
     border-left:   1px solid var(--border);
     box-sizing:    border-box;
     flex:          0 0 280px;
-    max-height:    100vh;
+    height:        calc(100vh - var(--header-height, 54px));
     overflow-y:    auto;
     padding:       12px 14px 24px;
     position:      sticky;
