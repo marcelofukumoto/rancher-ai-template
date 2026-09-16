@@ -529,60 +529,100 @@ export default {
       @close="closeTemplateEditor"
     />
 
-    <template v-else>
-      <!-- Compact bar: edit toggle + panel tabs (+ edit-only controls). -->
-      <div
-        v-if="loaded && templatingEnabled"
-        class="ai-home__bar"
-      >
-        <button
-          class="btn btn-sm role-secondary"
-          @click="toggleEditor"
-        >
-          {{ editing ? 'Done' : 'Edit Home' }}
-        </button>
-
-        <!-- PANELS render as tabs (and are managed here while editing). -->
+    <!-- While editing the page splits: the Home keeps the full width it will really have, and every
+       control lives in the sidebar beside it. -->
+    <div
+      v-else
+      class="ai-home__layout"
+    >
+      <div class="ai-home__main">
+        <!-- Slim bar: just the edit toggle and the panel tabs — navigation, not configuration. -->
         <div
-          v-if="showTabs"
-          class="ai-home__tabs"
+          v-if="loaded && templatingEnabled"
+          class="ai-home__bar"
         >
           <button
-            v-for="p in panels"
-            :key="p.id"
-            class="ai-home__tab"
-            :class="{ 'ai-home__tab--active': p.id === activePanelId }"
-            @click="selectPanel(p.id)"
-            @dblclick="editing && renamePanel(p)"
+            class="btn btn-sm role-secondary"
+            @click="toggleEditor"
           >
-            {{ p.name }}
-            <i
-              v-if="editing && panels.length > 1"
-              class="icon icon-close ai-home__tab-x"
-              @click.stop="removePanel(p.id)"
-            />
+            {{ editing ? 'Done' : 'Edit Home' }}
           </button>
-          <select
-            v-if="editing"
-            class="ai-home__tab ai-home__tab--add"
-            title="Add a panel"
-            @change="addPanel($event.target.value); $event.target.value = ''"
+
+          <!-- PANELS render as tabs (and are managed here while editing). -->
+          <div
+            v-if="showTabs"
+            class="ai-home__tabs"
           >
-            <option value="">
-              ＋
-            </option>
-            <option value="layout">
-              Layout panel (templates)
-            </option>
-            <option value="stock">
-              Stock Rancher Home
-            </option>
-          </select>
+            <button
+              v-for="p in panels"
+              :key="p.id"
+              class="ai-home__tab"
+              :class="{ 'ai-home__tab--active': p.id === activePanelId }"
+              :title="editing ? 'Double-click to rename' : null"
+              @click="selectPanel(p.id)"
+              @dblclick="editing && renamePanel(p)"
+            >
+              {{ p.name }}
+              <i
+                v-if="editing && panels.length > 1"
+                class="icon icon-close ai-home__tab-x"
+                @click.stop="removePanel(p.id)"
+              />
+            </button>
+            <select
+              v-if="editing"
+              class="ai-home__tab ai-home__tab--add"
+              title="Add a panel"
+              @change="addPanel($event.target.value); $event.target.value = ''"
+            >
+              <option value="">
+                ＋
+              </option>
+              <option value="layout">
+                Layout panel (templates)
+              </option>
+              <option value="stock">
+                Stock Rancher Home
+              </option>
+            </select>
+          </div>
+
+          <span
+            v-if="editing && dirty"
+            class="ai-home__dirty"
+          >• Unsaved</span>
         </div>
 
-        <template v-if="editing">
-          <span class="ai-home__sep" />
-          <label class="ai-home__lbl">Editing</label>
+        <!-- The applied VIEW (or the edit surface). Gate on templatingEnabled so the kill switch
+           swaps to stock Rancher live. StockHome shows when nothing is applied. -->
+        <div
+          v-if="loaded && templatingEnabled && view && (editing || hasContent)"
+          class="ai-home__surface"
+          @mouseleave="ui.hoverId = null"
+        >
+          <!-- A STOCK panel is Rancher's own Home, dropped in as a tab — nothing to edit. -->
+          <StockHome v-if="activeIsStock" />
+          <OrganizerNode
+            v-else-if="rootOrganizer"
+            :key="rootOrganizer.id"
+            :node="rootOrganizer"
+            :editing="editing"
+            :selected-id="selectedNodeId"
+            is-root
+          />
+        </div>
+        <StockHome v-else-if="loaded" />
+      </div>
+
+      <!-- ---- EDITOR SIDEBAR ---- -->
+      <aside
+        v-if="editing"
+        class="ai-home__sidebar"
+      >
+        <section class="ai-home__sec">
+          <h4 class="ai-home__sec-title">
+            Editing
+          </h4>
           <div class="ai-home__scope">
             <button
               class="btn btn-sm"
@@ -600,55 +640,171 @@ export default {
               Your Home
             </button>
           </div>
+          <p class="ai-home__hint">
+            {{ scope === 'user' ? 'Only you see this Home.' : 'Everyone sees this Home.' }}
+          </p>
+        </section>
 
-          <select
-            v-if="!activeIsStock"
-            class="ai-home__add"
-            :disabled="!templateOptions.length"
-            title="Add a template into the selected organizer"
-            @change="addTemplate($event.target.value); $event.target.value = ''"
-          >
-            <option value="">
-              ＋ Add template…
-            </option>
-            <option
-              v-for="t in templateOptions"
-              :key="t.name"
-              :value="t.name"
+        <!-- A stock panel has no layout, so none of the add/size controls apply to it. -->
+        <section
+          v-if="activeIsStock"
+          class="ai-home__sec"
+        >
+          <h4 class="ai-home__sec-title">
+            Panel
+          </h4>
+          <p class="ai-home__hint">
+            This panel is Rancher's own Home. There is nothing to lay out or configure.
+          </p>
+        </section>
+
+        <template v-else>
+          <section class="ai-home__sec">
+            <h4 class="ai-home__sec-title">
+              Add
+            </h4>
+            <select
+              class="ai-home__field"
+              :disabled="!templateOptions.length"
+              title="Add a template into the selected organizer"
+              @change="addTemplate($event.target.value); $event.target.value = ''"
             >
-              {{ t.displayName }}
-            </option>
-          </select>
+              <option value="">
+                ＋ Template…
+              </option>
+              <option
+                v-for="t in templateOptions"
+                :key="t.name"
+                :value="t.name"
+              >
+                {{ t.displayName }}
+              </option>
+            </select>
+            <button
+              class="btn btn-sm role-secondary ai-home__wide"
+              title="Add an organizer (a full-width row) into the selected organizer"
+              @click="addOrganizer"
+            >
+              ＋ Organizer
+            </button>
+            <select
+              class="ai-home__field"
+              title="Create a new template (opens a blank editor; saves only when you click Save)"
+              @change="newTemplate($event.target.value); $event.target.value = ''"
+            >
+              <option value="">
+                ＋ New template…
+              </option>
+              <option value="code">
+                Blank Code template
+              </option>
+              <option value="json">
+                Blank JSON template
+              </option>
+            </select>
+          </section>
 
-          <button
-            v-if="!activeIsStock"
-            class="btn btn-sm role-secondary"
-            title="Add an organizer (a full-width row) into the selected organizer"
-            @click="addOrganizer"
+          <!-- Properties of the selected node. Sizes/spacing take px numbers or CSS values (100%). -->
+          <section
+            v-if="selectedNode"
+            class="ai-home__sec"
           >
-            ＋ Organizer
-          </button>
+            <h4 class="ai-home__sec-title">
+              Selected
+            </h4>
 
-          <select
-            v-if="!activeIsStock"
-            class="ai-home__add"
-            title="Create a new template (opens a blank editor; saves only when you click Save)"
-            @change="newTemplate($event.target.value); $event.target.value = ''"
-          >
-            <option value="">
-              ＋ New template…
-            </option>
-            <option value="code">
-              Blank Code template
-            </option>
-            <option value="json">
-              Blank JSON template
-            </option>
-          </select>
+            <!-- Ancestor breadcrumb — the only reliable way to reach a parent organizer (and the
+               panel root), since children cover them completely. -->
+            <nav class="ai-home__crumbs">
+              <template
+                v-for="(crumb, i) in breadcrumb"
+                :key="crumb.id"
+              >
+                <span
+                  v-if="i"
+                  class="ai-home__crumb-sep"
+                >›</span>
+                <button
+                  class="ai-home__crumb"
+                  :class="{ 'ai-home__crumb--active': crumb.id === selectedNodeId }"
+                  :title="`Select ${ crumb.label }`"
+                  @click="selectNode(crumb.id)"
+                >
+                  {{ crumb.label }}
+                </button>
+              </template>
+            </nav>
 
-          <span class="ai-home__sep" />
+            <div class="ai-home__row">
+              <label class="ai-home__lbl">Width</label>
+              <span
+                v-if="selectedIsOrganizer"
+                class="ai-home__ro"
+              >100% (always)</span>
+              <input
+                v-else
+                class="ai-home__field ai-home__field--sm"
+                type="number"
+                min="1"
+                :max="gridColumns"
+                :value="selectedNode.colSpan"
+                title="How many of the 12 columns this template takes — or drag its right edge"
+                @change="setColSpan(selectedNode.id, $event.target.value)"
+              >
+              <span
+                v-if="!selectedIsOrganizer"
+                class="ai-home__lbl"
+              >/ 12</span>
+            </div>
+
+            <div
+              v-if="!selectedIsRoot"
+              class="ai-home__row"
+            >
+              <label class="ai-home__lbl">Height</label>
+              <input
+                class="ai-home__field ai-home__field--sm"
+                :value="selectedNode.height"
+                title="Height — 'auto' fits the content, a number is px, or use any CSS length"
+                @change="setNodeSize('height', $event.target.value)"
+              >
+            </div>
+
+            <!-- Margin (outside) and padding (inside) — drawn on the canvas in the same colours. -->
+            <label class="ai-home__lbl ai-home__lbl--margin">Margin</label>
+            <div class="ai-home__sides">
+              <input
+                v-for="side in ['top', 'right', 'bottom', 'left']"
+                :key="`m-${ side }`"
+                class="ai-home__field ai-home__field--sm"
+                :value="selectedNode.margin[side]"
+                :title="`Margin ${ side } — a number is px, or use % / any CSS length`"
+                :placeholder="side.charAt(0).toUpperCase()"
+                @change="setNodeBox('margin', side, $event.target.value)"
+              >
+            </div>
+
+            <label class="ai-home__lbl ai-home__lbl--padding">Padding</label>
+            <div class="ai-home__sides">
+              <input
+                v-for="side in ['top', 'right', 'bottom', 'left']"
+                :key="`p-${ side }`"
+                class="ai-home__field ai-home__field--sm"
+                :value="selectedNode.padding[side]"
+                :title="`Padding ${ side } — a number is px, or use % / any CSS length`"
+                :placeholder="side.charAt(0).toUpperCase()"
+                @change="setNodeBox('padding', side, $event.target.value)"
+              >
+            </div>
+            <p class="ai-home__hint">
+              A number is px; <code>%</code> is relative to the row.
+            </p>
+          </section>
+        </template>
+
+        <section class="ai-home__sec ai-home__sec--actions">
           <button
-            class="btn btn-sm role-primary"
+            class="btn btn-sm role-primary ai-home__wide"
             :disabled="saving || !dirty"
             title="Publish this layout to the selected scope"
             @click="save"
@@ -656,7 +812,7 @@ export default {
             {{ saving ? 'Saving…' : 'Save' }}
           </button>
           <button
-            class="btn btn-sm role-secondary"
+            class="btn btn-sm role-secondary ai-home__wide"
             :disabled="saving || !dirty"
             title="Restore the layout as it was when you started editing"
             @click="reset"
@@ -664,134 +820,37 @@ export default {
             Reset
           </button>
           <button
-            class="btn btn-sm role-link"
+            class="btn btn-sm role-link ai-home__wide"
             :disabled="saving"
             :title="scopeDisabled
               ? 'Re-apply this Home (keeps its panels)'
               : 'Stop applying this Home without deleting it — its panels are kept; the scope falls back to stock / the global default'"
             @click="toggleDisable"
           >
-            {{ scopeDisabled ? 'Enable' : 'Disable' }}
+            {{ scopeDisabled ? 'Enable this Home' : 'Disable this Home' }}
           </button>
-          <span
+
+          <p
             v-if="scopeDisabled"
             class="ai-home__disabled"
-          >Disabled — not applied (panels kept)</span>
-          <span
-            v-if="dirty"
-            class="ai-home__dirty"
-          >• Unsaved</span>
-
-          <span
+          >
+            Disabled — not applied (panels kept)
+          </p>
+          <p
             v-if="status"
-            class="text-success ml-10"
-          >{{ status }}</span>
-          <span
+            class="text-success ai-home__hint"
+          >
+            {{ status }}
+          </p>
+          <p
             v-if="error"
-            class="text-error ml-10"
-          >{{ error }}</span>
-        </template>
-      </div>
-
-      <!-- Properties of the selected node: size + padding accept px numbers or CSS values like 100%. -->
-      <div
-        v-if="editing && selectedNode && !activeIsStock"
-        class="ai-home__props"
-      >
-        <!-- Ancestor breadcrumb — the only reliable way to reach a parent organizer (and the panel
-           root), since children cover them completely. -->
-        <nav class="ai-home__crumbs">
-          <template
-            v-for="(crumb, i) in breadcrumb"
-            :key="crumb.id"
+            class="text-error ai-home__hint"
           >
-            <span
-              v-if="i"
-              class="ai-home__crumb-sep"
-            >›</span>
-            <button
-              class="ai-home__crumb"
-              :class="{ 'ai-home__crumb--active': crumb.id === selectedNodeId }"
-              :title="`Select ${ crumb.label }`"
-              @click="selectNode(crumb.id)"
-            >
-              {{ crumb.label }}
-            </button>
-          </template>
-        </nav>
-        <span
-          v-if="selectedIsOrganizer"
-          class="ai-home__lbl"
-        >100% wide</span>
-
-        <!-- Templates are sized in COLUMNS (1..12) — the same thing the drag handle changes. -->
-        <template v-if="!selectedIsOrganizer">
-          <label class="ai-home__lbl">col-span</label>
-          <input
-            class="ai-home__field ai-home__field--sm"
-            type="number"
-            min="1"
-            :max="gridColumns"
-            :value="selectedNode.colSpan"
-            title="How many of the 12 columns this template takes — or drag its right edge"
-            @change="setColSpan(selectedNode.id, $event.target.value)"
-          >
-        </template>
-
-        <template v-if="!selectedIsRoot">
-          <label class="ai-home__lbl">H</label>
-          <input
-            class="ai-home__field ai-home__field--sm"
-            :value="selectedNode.height"
-            title="Height — 'auto' fits the content, a number is px, or use any CSS length"
-            @change="setNodeSize('height', $event.target.value)"
-          >
-        </template>
-
-        <!-- Margin (outside) and padding (inside) — shown on the canvas as amber / teal outlines. -->
-        <label class="ai-home__lbl ai-home__lbl--margin">Margin</label>
-        <input
-          v-for="side in ['top', 'right', 'bottom', 'left']"
-          :key="`m-${ side }`"
-          class="ai-home__field ai-home__field--sm"
-          :value="selectedNode.margin[side]"
-          :title="`Margin ${ side } — a number is px, or use % / any CSS length`"
-          :placeholder="side.charAt(0).toUpperCase()"
-          @change="setNodeBox('margin', side, $event.target.value)"
-        >
-
-        <label class="ai-home__lbl ai-home__lbl--padding">Padding</label>
-        <input
-          v-for="side in ['top', 'right', 'bottom', 'left']"
-          :key="`p-${ side }`"
-          class="ai-home__field ai-home__field--sm"
-          :value="selectedNode.padding[side]"
-          :title="`Padding ${ side } — a number is px, or use % / any CSS length`"
-          :placeholder="side.charAt(0).toUpperCase()"
-          @change="setNodeBox('padding', side, $event.target.value)"
-        >
-      </div>
-
-      <!-- The applied VIEW (or the edit surface). Gate on templatingEnabled so the kill switch swaps
-         to stock Rancher live. StockHome shows when nothing is applied. -->
-      <div
-        v-if="loaded && templatingEnabled && view && (editing || hasContent)"
-        class="ai-home__surface"
-        @mouseleave="ui.hoverId = null"
-      >
-        <!-- A STOCK panel is Rancher's own Home, dropped in as a tab — no layout, nothing to edit. -->
-        <StockHome v-if="activeIsStock" />
-        <OrganizerNode
-          v-else-if="rootOrganizer"
-          :key="rootOrganizer.id"
-          :node="rootOrganizer"
-          :editing="editing"
-          :selected-id="selectedNodeId"
-          is-root
-        />
-      </div>
-      <StockHome v-else-if="loaded" />
-    </template>
+            {{ error }}
+          </p>
+        </section>
+      </aside>
+    </div>
   </div>
 </template>
 
@@ -801,8 +860,95 @@ export default {
     min-height: calc(100vh - var(--header-height, 54px));
   }
 
-  // Both bars stay pinned while the page scrolls, so the controls for whatever you have selected are
-  // always reachable no matter how tall the templates are.
+  // While editing, the page and the controls sit side by side: the Home keeps a real, full-width
+  // column (so what you see is what it will look like) and every control lives in the sidebar.
+  &__layout {
+    display: block;
+  }
+
+  &--editing &__layout {
+    align-items: flex-start;
+    display:     flex;
+  }
+
+  &__main {
+    min-width: 0;
+  }
+
+  &--editing &__main {
+    flex: 1 1 auto;
+  }
+
+  &__sidebar {
+    background:    var(--box-bg);
+    border-left:   1px solid var(--border);
+    box-sizing:    border-box;
+    flex:          0 0 280px;
+    max-height:    100vh;
+    overflow-y:    auto;
+    padding:       12px 14px 24px;
+    position:      sticky;
+    top:           0;
+    width:         280px;
+    z-index:       25;
+  }
+
+  &__sec {
+    border-bottom:  1px solid var(--border);
+    display:        flex;
+    flex-direction: column;
+    gap:            8px;
+    padding-bottom: 14px;
+    margin-bottom:  14px;
+
+    &:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+    }
+  }
+
+  &__sec-title {
+    color:          var(--muted);
+    font-size:      11px;
+    font-weight:    600;
+    letter-spacing: 0.06em;
+    margin:         0;
+    text-transform: uppercase;
+  }
+
+  &__hint {
+    color:     var(--muted);
+    font-size: 11px;
+    margin:    0;
+
+    code {
+      padding: 0 3px;
+    }
+  }
+
+  &__row {
+    align-items: center;
+    display:     flex;
+    gap:         6px;
+  }
+
+  // T / R / B / L in one line, matching the order the tooltips describe.
+  &__sides {
+    display:               grid;
+    gap:                   4px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  &__wide {
+    width: 100%;
+  }
+
+  &__ro {
+    color:     var(--body-text);
+    font-size: 12px;
+  }
+
+  // The bar stays pinned while the page scrolls.
   &__bar {
     align-items:   center;
     background:    var(--header-bg, var(--box-bg));
@@ -814,19 +960,6 @@ export default {
     position:      sticky;
     top:           0;
     z-index:       20;
-  }
-
-  &__props {
-    align-items:   center;
-    background:    var(--box-bg);
-    border-bottom: 1px solid var(--border);
-    display:       flex;
-    flex-wrap:     wrap;
-    gap:           6px;
-    padding:       5px 16px;
-    position:      sticky;
-    top:           41px; // sits directly under the toolbar above
-    z-index:       19;
   }
 
   &__tabs {
@@ -924,7 +1057,6 @@ export default {
     gap:     2px;
   }
 
-  &__add,
   &__field {
     height:        28px;
     border:        1px solid var(--border);
@@ -934,15 +1066,24 @@ export default {
     padding:       0 8px;
   }
 
+  &__sidebar &__field {
+    width: 100%;
+  }
+
   &__field--sm {
-    width:      64px;
     padding:    0 6px;
     text-align: center;
+    width:      64px;
+  }
+
+  &__sidebar &__field--sm {
+    width: auto;
   }
 
   &__crumbs {
     align-items: center;
     display:     flex;
+    flex-wrap:   wrap;
     gap:         2px;
   }
 
