@@ -48,7 +48,8 @@ export const BUILDING_BLOCKS = [
     icon: 'table',
     span: 8,
     spec: {
-      kind: WIDGET_TABLE, title: 'Table', resource: CLUSTER, columns: ['state', 'name', 'provider', 'version', 'nodes', 'cpu'], sortBy: 'name'
+      // No columns: a fresh Table shows everything its resource has (see WidgetTable).
+      kind: WIDGET_TABLE, title: 'Table', resource: CLUSTER, sortBy: 'name'
     },
   },
   {

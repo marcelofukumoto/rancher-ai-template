@@ -207,7 +207,10 @@ export function typeColumns(getters, resource) {
     label:    header.labelKey ? getters['i18n/t'](header.labelKey) : (header.label || header.name),
     sortable: !!header.sort,
     header,
-  }));
+  // A type can declare an ACTION column: Rancher's cluster list ends with `explorer`, a 65px column
+  // labelled ' ' that exists only so a row can slot its Explore button into it. There is nothing to
+  // show and nothing to name, so it is not a column anyone can pick — a blank label is the tell.
+  })).filter((column) => column.label.trim());
 }
 
 /**

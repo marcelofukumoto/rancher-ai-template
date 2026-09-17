@@ -64,8 +64,16 @@ export default {
       return Object.fromEntries(typeColumns(this.$store.getters, this.widget.resource).map((c) => [c.id, c.header]));
     },
 
+    // Nothing chosen means EVERYTHING the type has — the same columns its own list page shows.
+    // Starting from all of them and unticking is less work than hunting for the ones you want.
+    defaultColumns() {
+      const own = Object.keys(this.typeHeaders);
+
+      return own.length ? own : ['state', 'name'];
+    },
+
     headers() {
-      const ids = this.widget.columns?.length ? this.widget.columns : ['state', 'name'];
+      const ids = this.widget.columns?.length ? this.widget.columns : this.defaultColumns;
 
       return ids.map((id) => {
         const header = this.headerFor(id);

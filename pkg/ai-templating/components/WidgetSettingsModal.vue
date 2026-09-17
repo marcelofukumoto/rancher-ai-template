@@ -189,6 +189,16 @@ export default {
     },
   },
 
+  created() {
+    // A widget that has never been configured has no `columns`, and the table reads that as "show
+    // everything". Materialise it here so the ticks match what is actually drawn — otherwise the
+    // panel opens with nothing ticked beside a table showing every column, and ticking one box
+    // would read as "add a column" while actually dropping the other eight.
+    if (this.hasColumns && !this.draft.columns?.length) {
+      this.draft.columns = this.columns.map((c) => c.id);
+    }
+  },
+
   mounted() {
     // Escape closes it, like every other dialog in the product.
     this.onKey = (ev) => {
@@ -223,20 +233,16 @@ export default {
 
   watch: {
     /**
-     * Changing the type changes what a column even means, so the old ticks and the old sort cannot
-     * simply be carried over: `user-id` is not a column a Cluster has. Whatever still exists on the
-     * new type is kept — State and Name usually survive — and anything that does not is dropped,
-     * falling back to the first few columns so the table is never left with none.
+     * Changing the type changes what a column even means — `user-id` is not a column a Cluster has —
+     * so the old ticks cannot carry over. Everything the new type has is ticked: you drop what you
+     * do not want, rather than hunt for what you do. A sort that no longer applies is cleared.
      */
     'draft.resource'(neu, old) {
       if (neu === old) {
         return;
       }
 
-      const ids = this.columns.map((c) => c.id);
-      const kept = (this.draft.columns || []).filter((id) => ids.includes(id));
-
-      this.draft.columns = kept.length ? kept : ids.slice(0, 4);
+      this.draft.columns = this.columns.map((c) => c.id);
 
       if (this.draft.sortBy && !this.sortFields.some((f) => f.id === this.draft.sortBy)) {
         this.draft.sortBy = '';
