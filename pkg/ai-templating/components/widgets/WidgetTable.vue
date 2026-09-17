@@ -42,12 +42,6 @@ const GENERIC_HEADERS = {
   created:   AGE,
 };
 
-// A CLUSTER column, added only when rows come from more than one. `widgetCluster` is stamped on
-// each row by fetchClusterPage — without it a merged table cannot say where a row came from.
-const CLUSTER_COLUMN = {
-  name: 'widgetCluster', label: 'Cluster', value: 'widgetCluster', sort: false, search: false
-};
-
 export default {
   name:       'WidgetTable',
   components: {
@@ -68,15 +62,15 @@ export default {
   },
 
   computed: {
-    // A Kubernetes type lives once PER CLUSTER, so it is read from named clusters rather than from
+    // A Kubernetes type lives once PER CLUSTER, so it is read from a named cluster rather than from
     // the global API. That is a different fetch, a different table, and a question the settings
     // panel has to have asked.
     downstream() {
       return isDownstream(this.widget.resource);
     },
 
-    clusters() {
-      return this.widget.clusters || [];
+    cluster() {
+      return this.widget.cluster || '';
     },
 
     inStore() {
@@ -141,11 +135,6 @@ export default {
       return this.filterRows(this.rows);
     },
 
-    // Headers for the downstream table, plus the Cluster column when the rows are mixed.
-    clusterHeaders() {
-      return this.clusters.length > 1 ? [...this.headers, CLUSTER_COLUMN] : this.headers;
-    },
-
     // External pagination means "the rows you were handed ARE the page" — the table shows them all
     // and trusts the count. That is true of a single cluster, where the backend sliced the page, and
     // false of a merge, where we hold every row: there the table must do its own paging or it draws
@@ -155,8 +144,8 @@ export default {
     },
 
     downstreamMessage() {
-      if (!this.clusters.length) {
-        return 'Choose one or more clusters in this widget\u2019s settings — a Kubernetes type lives once per cluster.';
+      if (!this.cluster) {
+        return 'Choose a cluster in this widget\u2019s settings — a Kubernetes type lives once per cluster.';
       }
 
       return this.pageError;
@@ -167,7 +156,7 @@ export default {
     'widget.resource'() {
       this.loadPage();
     },
-    'widget.clusters'() {
+    'widget.cluster'() {
       this.loadPage();
     },
     'widget.sortBy'() {
@@ -203,7 +192,7 @@ export default {
       try {
         const res = await fetchClusterPage(this.$store, {
           resource: this.widget.resource,
-          clusters: this.clusters,
+          cluster:  this.cluster,
           page:     pagination?.page || 1,
           pageSize: pagination?.perPage || this.perPage,
           sortBy:   this.widget.sortBy,
@@ -218,7 +207,7 @@ export default {
       } catch (e) {
         this.rows = [];
         this.pageCount = 0;
-        this.pageError = e?.message || `Could not read ${ this.widget.resource } from those clusters.`;
+        this.pageError = e?.message || `Could not read ${ this.widget.resource } from that cluster.`;
       } finally {
         this.loadingPage = false;
       }
@@ -265,7 +254,7 @@ export default {
 </script>
 
 <template>
-  <!-- A type read from named clusters: we fetch the page ourselves, because the cluster is not
+  <!-- A type read from a named cluster: we fetch the page ourselves, because the cluster is not
      something PaginatedResourceTable can be told about. -->
   <WidgetCard
     v-if="downstream"
@@ -276,7 +265,7 @@ export default {
     <ResourceTable
       :schema="schema"
       :rows="visibleRows"
-      :headers="clusterHeaders"
+      :headers="headers"
       :loading="loadingPage"
       :external-pagination-enabled="serverPaged"
       :external-pagination-result="externalResult"
@@ -293,8 +282,8 @@ export default {
       v-if="truncated"
       class="wtable__note"
     >
-      Showing the first rows from each cluster. Several clusters cannot be paged as one — each is a
-      separate API — so pick a single cluster to page through all of it.
+      This cluster has more rows than a filtered widget reads at once, so the filter was applied to
+      the first of them. Narrow the filter, or drop it to page through all of them.
     </p>
   </WidgetCard>
 

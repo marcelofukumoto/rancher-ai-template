@@ -108,6 +108,9 @@ export default {
      * A Kubernetes type exists once per CLUSTER, so one has to be named before there is anything to
      * show. Asking only for downstream types keeps the question off the widgets that do not have it
      * — a Cluster or a User is global, there is nothing to pick.
+     *
+     * ONE cluster, not several: each is a separate API with its own paging, so a widget spanning
+     * two of them could not be paged at all. One cluster is what makes the table a real table.
      */
     needsClusters() {
       return this.readsData && isDownstream(this.draft.resource);
@@ -264,23 +267,6 @@ export default {
   },
 
   methods: {
-    toggleCluster(id) {
-      const chosen = [...(this.draft.clusters || [])];
-      const at = chosen.indexOf(id);
-
-      if (at >= 0) {
-        chosen.splice(at, 1);
-      } else {
-        chosen.push(id);
-      }
-
-      this.draft.clusters = chosen;
-    },
-
-    hasCluster(id) {
-      return (this.draft.clusters || []).includes(id);
-    },
-
     toggleColumn(id) {
       const columns = [...(this.draft.columns || [])];
       const at = columns.indexOf(id);
@@ -411,23 +397,25 @@ export default {
         </template>
 
         <template v-if="needsClusters">
-          <label class="wsm__label">Clusters</label>
-          <div class="wsm__columns wsm__columns--wide">
-            <label
+          <label class="wsm__label">Cluster</label>
+          <select
+            v-model="draft.cluster"
+            class="wsm__field"
+          >
+            <option value="">
+              Choose a cluster…
+            </option>
+            <option
               v-for="cluster in clusters"
               :key="cluster.id"
+              :value="cluster.id"
             >
-              <input
-                type="checkbox"
-                :checked="hasCluster(cluster.id)"
-                @change="toggleCluster(cluster.id)"
-              >
               {{ cluster.label }}
-            </label>
-          </div>
+            </option>
+          </select>
           <p class="wsm__hint">
-            This type lives once per cluster. Pick one to page through all of it; pick several and
-            the rows are merged, with a Cluster column — several clusters cannot be paged as one.
+            This type lives once per cluster, so a widget shows one of them. Each cluster is its own
+            API — rows from several could not be paged as one list.
           </p>
         </template>
 

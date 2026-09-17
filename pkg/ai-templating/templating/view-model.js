@@ -224,7 +224,7 @@ export function spacingPresetOf(padding) {
  *   where       'view'   — the same clusters the view covers
  *               'custom' — only the clusters/namespaces in `targets`
  *   filter      a labels-or-fields expression: `env=prod`, `state != Active`
- *   clusters    for a downstream type, the cluster ids to read it from
+ *   cluster     for a downstream type, the cluster id to read it from
  *   columns     table columns to show, in order
  *   sortBy      field to sort on, `sortDir` 'asc' | 'desc'
  *   groupBy     field a bar chart / status summary groups by
@@ -247,8 +247,9 @@ export function normalizeWidget(widget) {
     where:     w.where === 'custom' ? 'custom' : 'view',
     source:    w.source === 'custom' ? 'custom' : 'home',
     targets:   arr(w.targets).filter((t) => typeof t === 'string'),
-    // Which clusters a downstream type is read from — a Kubernetes type exists once per cluster.
-    clusters:  arr(w.clusters).filter((c) => typeof c === 'string'),
+    // Which cluster a downstream type is read from — a Kubernetes type exists once per cluster, and
+    // only one of them, because several clusters are several APIs and cannot be paged as one.
+    cluster:   str(w.cluster) || arr(w.clusters).find((c) => typeof c === 'string') || '',
     filter:    str(w.filter),
     columns:   arr(w.columns).filter((c) => typeof c === 'string'),
     sortBy:    str(w.sortBy),

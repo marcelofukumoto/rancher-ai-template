@@ -451,30 +451,23 @@ export function clusterOptions(getters) {
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-/** A cluster id back to the name it was chosen by — ids are `c-m-…`, which nobody recognises. */
-export function clusterLabel(getters, id) {
-  return clusterOptions(getters).find((c) => c.id === id)?.label || id;
-}
-
 /**
- * One page of a type, read from one or more named clusters.
+ * One page of a type, read from ONE named cluster.
  *
- * With ONE cluster and no filter this is true server-side pagination: the backend is asked for that
- * page and returns it with the total count.
+ * One, because a Kubernetes type lives behind its cluster's own Steve API and several clusters are
+ * several APIs: no backend can answer "rows 9 to 16 of the three of them combined". So the widget
+ * names a single cluster and gets real pagination — the backend is asked for that page and returns
+ * it with the total count.
  *
- * Otherwise there is no such thing. Several clusters are several APIs, each with its own paging, and
- * no backend can answer "rows 9 to 16 of the three of them combined". A widget FILTER is the same
- * problem from the other side: it is applied here, so filtering one page of ten would search ten
- * rows and call the rest absent. Both cases ask each cluster for up to `mergeCap` rows and hand the
- * lot over to be filtered and paged locally. `truncated` says when a cluster had more than the cap,
- * because a total that quietly stops being a total is worse than a visible limit.
+ * The exception is a FILTER. It is applied here, not by the API, so filtering one page of ten would
+ * search ten rows and call the rest absent. A filtered widget therefore asks for up to `cap` rows
+ * and filters and pages what came back; `truncated` says when the cluster had more, because a total
+ * that quietly stops being a total is worse than a visible limit.
  */
 export async function fetchClusterPage(store, {
-  resource, clusters, page = 1, pageSize = 10, sortBy, sortDir, filtered = false, mergeCap = 500
+  resource, cluster, page = 1, pageSize = 10, sortBy, sortDir, filtered = false, cap = 500
 }) {
-  const ids = (clusters || []).filter(Boolean);
-
-  if (!resource || !ids.length) {
+  if (!resource || !cluster) {
     return {
       rows: [], count: 0, truncated: false, serverPaged: false
     };
@@ -482,47 +475,26 @@ export async function fetchClusterPage(store, {
 
   const field = steveSortField(store.getters, resource, sortBy);
   const sort = field ? [{ field, asc: sortDir !== 'desc' }] : [];
-  const ask = (id, args) => store.dispatch('management/findPage', {
+  const res = await store.dispatch('management/findPage', {
     type: resource,
     opt:  {
-      url: `/k8s/clusters/${ encodeURIComponent(id) }/v1/${ resource }`, transient: true, watch: false, pagination: args
+      url:        `/k8s/clusters/${ encodeURIComponent(cluster) }/v1/${ resource }`,
+      transient:  true,
+      watch:      false,
+      pagination: filtered ? {
+        page: 1, pageSize: cap, sort
+      } : {
+        page, pageSize, sort
+      },
     },
   });
 
-  if (ids.length === 1 && !filtered) {
-    const res = await ask(ids[0], {
-      page, pageSize, sort
-    });
-
-    return {
-      rows:        withCluster(res?.data, ids[0], store.getters),
-      count:       res?.pagination?.result?.count ?? res?.data?.length ?? 0,
-      truncated:   false,
-      serverPaged: true,
-    };
-  }
-
-  const pages = await Promise.all(ids.map((id) => ask(id, {
-    page: 1, pageSize: mergeCap, sort
-  })
-    .then((res) => ({ id, res }))
-    .catch(() => ({ id, res: null }))));
-
-  const rows = pages.flatMap(({ id, res }) => withCluster(res?.data, id, store.getters));
-  const truncated = pages.some(({ res }) => (res?.pagination?.result?.count ?? 0) > mergeCap);
+  const count = res?.pagination?.result?.count ?? res?.data?.length ?? 0;
 
   return {
-    rows, count: rows.length, truncated, serverPaged: false
+    rows:        res?.data || [],
+    count:       filtered ? (res?.data?.length ?? 0) : count,
+    truncated:   filtered && count > cap,
+    serverPaged: !filtered,
   };
-}
-
-/** Rows carry the cluster they came from, so a merged table can say which is which. */
-function withCluster(rows, clusterId, getters) {
-  const label = clusterLabel(getters, clusterId);
-
-  return (rows || []).map((row) => {
-    row.widgetCluster = label;
-
-    return row;
-  });
 }
