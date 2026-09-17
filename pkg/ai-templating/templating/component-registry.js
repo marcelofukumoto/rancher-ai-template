@@ -985,20 +985,34 @@ function buildExtra() {
     };
   });
 
-  // This extension's own widget components, so custom views can import them. Pulled in with
+  // This extension's own widget components, so custom views can import them under a SYNTHETIC
+  // "@shell/pages/c/_cluster/_template/<Name>.vue" path (see below). No such file exists in the
+  // shell — the alias is this registry's, and it is what lets a stored template written against
+  // these widgets keep resolving. Pulled in with
   // require() rather than a static import ON PURPOSE: a static import of ../components/* makes this
   // module depend on the package's main chunk, which depends back on the registry — the very cycle
   // that broke the build. require() defers that edge to first lookup, long after both have loaded.
+  // Each is loaded in its OWN try: one of these failing used to take the rest down with it, so a
+  // single moved file silently un-registered every widget instead of just its own.
   const own = [];
+  const loaders = [
+    // The NAME is the contract — it is what stored templates import — so it stays put even when the
+    // file behind it moves. TemplateOverview now lives in widgets/ as WidgetOverview.
+    // eslint-disable-next-line global-require
+    ['TemplateOverview', () => require('../components/widgets/WidgetOverview.vue')],
+    // eslint-disable-next-line global-require
+    ['TemplateResourceList', () => require('../components/TemplateResourceList.vue')],
+  ];
 
-  try {
-    // eslint-disable-next-line global-require
-    own.push(['TemplateOverview', interop(require('../components/TemplateOverview.vue'))]);
-    // eslint-disable-next-line global-require
-    own.push(['TemplateResourceList', interop(require('../components/TemplateResourceList.vue'))]);
-  } catch (e) {
-    // Never let a widget failing to load stop the whole registry from building.
-  }
+  loaders.forEach(([name, load]) => {
+    try {
+      own.push([name, interop(load())]);
+    } catch (e) {
+      // Never let one widget failing to load stop the others, or the whole registry, from building.
+      // eslint-disable-next-line no-console
+      console.warn(`[ai-templating] custom-view component "${ name }" could not be registered`, e);
+    }
+  });
 
   own.forEach(([name, comp]) => {
     const ns = { __esModule: true, default: comp };
