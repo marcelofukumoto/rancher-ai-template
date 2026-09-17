@@ -57,12 +57,13 @@ export default {
 
   data() {
     return {
-      resizing: false,
+      resizing:        false,
       // Measured margin/padding in PX. The bands can't just reuse the authored values: a band is
       // absolutely positioned, so a percentage on it resolves against THIS tile, while the real
       // margin resolves against the line — a col-span-3 tile would draw the band 4x too small.
       // getComputedStyle gives the used value in px, which is exact for %, rem, anything.
-      used:     null,
+      used:            null,
+      usedCardPadding: null,
     };
   },
 
@@ -108,14 +109,26 @@ export default {
       const subtract = [this.margin.left, this.margin.right].filter((v) => v && v !== 0).map(cssSize);
       const basis = `calc((100% - ${ gaps }px) * ${ this.span } / ${ GRID_COLUMNS } + ${ own }px${ subtract.length ? ` - ${ subtract.join(' - ') }` : '' })`;
 
+      // PADDING is the room the content has INSIDE the card, not a ring around the widget — so it
+      // is handed to the card as custom properties rather than applied here. A widget is flush in
+      // its cell; only its margin and the view's gap separate it from its neighbours.
+      const p = normalizeSides(this.node.padding);
+      // The design's header is 12/16 — three quarters of the side inset, vertically — and its body
+      // hangs straight off the header with no gap. Scaling keeps that shape at every spacing.
+      const headV = Math.round(p.top * 0.75);
+      const headVBottom = Math.round(p.bottom * 0.75);
+
       const s = {
-        boxSizing: 'border-box',
+        boxSizing:          'border-box',
         // min-width:0 is REQUIRED: a flex item defaults to min-width:auto and so refuses to shrink
         // below its content's min-content width — a wide table would blow the line out past the page.
-        flex:      `0 0 ${ basis }`,
-        margin:    cssSides(this.node.margin),
-        minWidth:  0,
-        padding:   cssSides(this.node.padding),
+        flex:               `0 0 ${ basis }`,
+        margin:             cssSides(this.node.margin),
+        minWidth:           0,
+        '--wcard-head-pad': `${ headV }px ${ p.right }px ${ headVBottom }px ${ p.left }px`,
+        '--wcard-head-min': `${ 32 + headV + headVBottom }px`,
+        '--wcard-body-pad': `0 ${ p.right }px ${ p.bottom }px ${ p.left }px`,
+        '--wcard-solo-pad': cssSides(this.node.padding),
       };
 
       const height = this.node.height;
@@ -135,8 +148,9 @@ export default {
       return this.bandsFor(this.used?.margin, true);
     },
 
+    // Padding lives on the CARD now, so measure it there rather than on this wrapper.
     paddingBands() {
-      return this.bandsFor(this.used?.padding, false);
+      return this.bandsFor(this.usedCardPadding, false);
     },
   },
 
@@ -220,6 +234,7 @@ export default {
     measure() {
       if (!this.showBoxModel || !this.$el?.getBoundingClientRect) {
         this.used = null;
+        this.usedCardPadding = null;
 
         return;
       }
@@ -227,14 +242,17 @@ export default {
       const cs = getComputedStyle(this.$el);
       const n = (v) => Math.round((parseFloat(v) || 0) * 10) / 10;
 
+      const card = this.$el.querySelector('.wcard, .wtext');
+      const cardCs = card ? getComputedStyle(card) : null;
+
       this.used = {
         margin: {
           top: n(cs.marginTop), right: n(cs.marginRight), bottom: n(cs.marginBottom), left: n(cs.marginLeft)
         },
-        padding: {
-          top: n(cs.paddingTop), right: n(cs.paddingRight), bottom: n(cs.paddingBottom), left: n(cs.paddingLeft)
-        },
       };
+      this.usedCardPadding = cardCs ? {
+        top: n(cardCs.paddingTop), right: n(cardCs.paddingRight), bottom: n(cardCs.paddingBottom), left: n(cardCs.paddingLeft)
+      } : null;
     },
 
     onSelect() {

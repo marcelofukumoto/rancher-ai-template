@@ -4,7 +4,7 @@ import LizWidgetPanel from './LizWidgetPanel.vue';
 import { BUILDING_BLOCKS, READY_MADE, searchCatalog, blockName } from '../templating/widget-catalog';
 import {
   NODE_WIDGET, WIDTH_PRESETS, HEIGHT_PRESETS, SPACING_PRESETS, COLUMN_SPANS,
-  DEFAULT_GAP, widthPresetOf, heightPresetOf, spacingPresetOf
+  DEFAULT_GAP, DEFAULT_PAGE_PADDING, widthPresetOf, heightPresetOf, spacingPresetOf
 } from '../templating/view-model';
 
 // The "Edit view" drawer. Three tabs, and the split between them is the point:
@@ -65,7 +65,7 @@ export default {
   emits: [
     'close', 'add', 'drag-start', 'drag-end', 'set-width', 'set-height', 'set-spacing',
     'set-box', 'set-col-span', 'set-gap', 'set-name', 'set-default', 'publish', 'delete',
-    'liz-preview', 'start-from', 'advanced'
+    'liz-preview', 'start-from', 'advanced', 'set-page-padding'
   ],
 
   data() {
@@ -92,6 +92,10 @@ export default {
 
     gap() {
       return this.view?.gap ?? DEFAULT_GAP;
+    },
+
+    pagePadding() {
+      return this.view?.pad ?? DEFAULT_PAGE_PADDING;
     },
 
     // "Selected: Clusters (Table)" — the widget's own title, then which building block it is.
@@ -461,6 +465,28 @@ export default {
           <span class="evs__hint">pixels between widgets</span>
         </div>
 
+        <h4
+          v-if="!isStock"
+          class="evs__group"
+        >
+          Page padding
+        </h4>
+        <div
+          v-if="!isStock"
+          class="evs__row"
+        >
+          <input
+            class="evs__field evs__field--num"
+            type="number"
+            min="0"
+            max="96"
+            :value="pagePadding"
+            aria-label="Page padding in pixels"
+            @change="$emit('set-page-padding', $event.target.value)"
+          >
+          <span class="evs__hint">pixels around the whole grid</span>
+        </div>
+
         <h4 class="evs__group">
           This view
         </h4>
@@ -498,9 +524,11 @@ export default {
   display:        flex;
   flex:           0 0 380px;
   flex-direction: column;
-  height:         calc(100vh - var(--header-height, 54px));
+  // Below the view bar, which is sticky at 0 and spans the page above both of us. At top:0 this
+  // rode up over the bar the moment the page scrolled.
+  height:         calc(100vh - var(--header-height, 54px) - 57px);
   position:       sticky;
-  top:            0;
+  top:            57px;
   width:          380px;
   z-index:        25;
 

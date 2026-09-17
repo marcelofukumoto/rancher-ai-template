@@ -7,7 +7,7 @@ import EditViewSidebar from '../components/EditViewSidebar.vue';
 import WidgetSettingsModal from '../components/WidgetSettingsModal.vue';
 import { isTemplatingEnabled, appliedViewScopes, saveView, fetchTemplatingConfigMaps } from '../templating/template-engine';
 import {
-  DEFAULT_GAP, newId, newPanel, newWidgetNode, isStockPanel, findWidget,
+  DEFAULT_GAP, DEFAULT_PAGE_PADDING, newId, newPanel, newWidgetNode, isStockPanel, findWidget,
   insertWidget, removeWidget, moveWidget, moveWidgetTo, updateWidget,
   setColSpan, heightForPreset, SPACING_PRESETS
 } from '../templating/view-model';
@@ -177,6 +177,11 @@ export default {
 
     gap() {
       return this.activeView?.gap ?? DEFAULT_GAP;
+    },
+
+    // The space between the grid and the edges of the page — a view-level setting like the gap.
+    surfaceStyle() {
+      return { padding: `${ this.activeView?.pad ?? DEFAULT_PAGE_PADDING }px` };
     },
 
     hasContent() {
@@ -757,6 +762,14 @@ export default {
       }
     },
 
+    setPagePadding(value) {
+      const panel = this.workingPanel();
+
+      if (panel) {
+        panel.pad = Math.max(0, Math.min(96, Math.round(Number(value) || 0)));
+      }
+    },
+
     removeNode(id) {
       this.mutate((widgets) => removeWidget(widgets, id));
       if (this.selectedNodeId === id) {
@@ -904,6 +917,7 @@ export default {
           <div
             v-if="loaded && templatingEnabled && activeView && (editing || hasContent)"
             class="ai-home__surface"
+            :style="surfaceStyle"
           >
             <!-- A STOCK view is Rancher's own Home, kept as a tab — nothing to edit. -->
             <StockHome v-if="activeIsStock" />
@@ -941,6 +955,7 @@ export default {
           @set-col-span="setSelectedWidth"
           @advanced="ui.showBoxModel = $event"
           @set-gap="setGap"
+          @set-page-padding="setPagePadding"
           @set-name="renameView"
           @set-default="setDefaultView"
           @publish="publishView"
@@ -987,9 +1002,10 @@ export default {
     flex: 1 1 auto;
   }
 
-  // 20px around the grid in BOTH modes, so a view looks the same whether or not you are editing it.
+  // The space around the grid is a per-view setting (see `surfaceStyle`), applied in BOTH modes so
+  // a view looks the same whether or not you are editing it.
   &__surface {
-    padding: 20px;
+    box-sizing: border-box;
   }
 
   &__error {

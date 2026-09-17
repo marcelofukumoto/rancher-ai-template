@@ -55,7 +55,7 @@ export default {
   font-size:     14px;
   height:        100%;
   overflow:      auto;
-  padding:       20px 24px;
+  padding:       var(--wcard-solo-pad, 16px);
 
   &__title {
     font-size:   18px;

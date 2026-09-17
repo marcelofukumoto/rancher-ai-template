@@ -39,6 +39,9 @@ export const DEFAULT_COL_SPAN = 6;
 /** The gap between widgets. One value for the whole VIEW, not something per widget. */
 export const DEFAULT_GAP = 20;
 
+/** The space between the grid and the edges of the page. Also one value for the whole VIEW. */
+export const DEFAULT_PAGE_PADDING = 20;
+
 /** One grid row. `2 rows` is two of these plus the gap between them. */
 export const ROW_HEIGHT = 156;
 
@@ -77,10 +80,17 @@ export const HEIGHT_PRESETS = [
   },
 ];
 
-/** SPACING presets set the widget's padding. Advanced overrides them with exact pixels. */
+/**
+ * SPACING presets set the padding INSIDE a widget — how much room its content has within its own
+ * card. That is the ordinary meaning of padding, and it leaves MARGIN (under Advanced) free to mean
+ * the ordinary thing too: space OUTSIDE the widget, on top of the view's gap.
+ *
+ * Compact is ZERO, so content runs to the card's edge. Default is 16, which is the design's card.
+ * Advanced overrides all three with exact pixels.
+ */
 export const SPACING_PRESETS = [
   {
-    id: 'compact', label: 'Compact', padding: 8
+    id: 'compact', label: 'Compact', padding: 0
   },
   {
     id: 'default', label: 'Default', padding: 16
@@ -257,23 +267,12 @@ export function normalizeWidget(widget) {
   return out;
 }
 
-// Widgets used to be created with 16px of padding around them. That was a mistake, not a choice:
-// the card inside already has its own 16px inset, so it was padding on top of padding, and the
-// design puts nothing at all between a card and its cell. A widget still carrying exactly that old
-// factory value is read as unset and comes back flush; anything else is a real decision and is kept.
-const LEGACY_DEFAULT_PADDING = 16;
-
-function isLegacyPadding(padding) {
-  return !!padding && [padding.top, padding.right, padding.bottom, padding.left]
-    .every((side) => side === LEGACY_DEFAULT_PADDING);
-}
-
 /** The box every widget on the grid carries: how wide, how tall, and its own spacing. */
 function widgetBox(opts, defaultSpan) {
-  // No padding by default — Compact. The card supplies the inset, the view's gap does the spacing.
-  const padding = !opts.padding || isLegacyPadding(opts.padding) ? {
-    top: 0, right: 0, bottom: 0, left: 0
-  } : opts.padding;
+  // 16 all round — the design's own card inset, which is what Default spacing means.
+  const padding = opts.padding ?? {
+    top: 16, right: 16, bottom: 16, left: 16
+  };
 
   return {
     colSpan: clampSpan(opts.colSpan ?? defaultSpan),
@@ -382,6 +381,7 @@ export function newPanel(name, opts = {}) {
     id:      opts.id || uid('panel'),
     name:    name || 'Untitled view',
     gap:     Number.isFinite(Number(opts.gap)) ? Number(opts.gap) : DEFAULT_GAP,
+    pad:     Number.isFinite(Number(opts.pad)) ? Number(opts.pad) : DEFAULT_PAGE_PADDING,
     widgets: Array.isArray(opts.widgets) ? opts.widgets : [],
   };
 }
@@ -406,6 +406,7 @@ function normalizePanel(panel) {
     id:      panel?.id || uid('panel'),
     name:    panel?.name || 'Untitled view',
     gap:     Number.isFinite(Number(panel?.gap)) ? Number(panel.gap) : DEFAULT_GAP,
+    pad:     Number.isFinite(Number(panel?.pad)) ? Number(panel.pad) : DEFAULT_PAGE_PADDING,
     // `widgets` is the shape now; `organizer` is the tree this replaced.
     widgets: flattenWidgets(panel?.widgets ?? panel?.organizer),
   };

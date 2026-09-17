@@ -257,9 +257,12 @@ export default {
   z-index:       20;
 
   // A wash of the primary colour while editing — the same tint the drop zone and the selected
-  // widget use, so the whole edit mode reads as one state. --nav-active is grey, not blue.
+  // widget use, so the whole edit mode reads as one state.
+  //
+  // --accent-btn is TRANSLUCENT, and this bar is sticky: laid on directly it let the page scroll
+  // through it. Layering the tint over an opaque base keeps the token and makes the bar solid.
   &--editing {
-    background: var(--accent-btn);
+    background: linear-gradient(var(--accent-btn), var(--accent-btn)), var(--body-bg);
   }
 
   &__home {

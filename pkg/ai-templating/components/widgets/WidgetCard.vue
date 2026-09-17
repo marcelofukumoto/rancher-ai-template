@@ -89,14 +89,16 @@ export default {
   min-height:     0;
   overflow:       hidden;
 
+  // The insets come from the widget's own spacing (see WidgetNode), falling back to the design's
+  // card when this is used outside one.
   &__head {
     align-items: center;
     box-sizing:  border-box;
     display:     flex;
     flex:        0 0 auto;
     gap:         10px;
-    min-height:  56px;
-    padding:     12px 16px;
+    min-height:  var(--wcard-head-min, 56px);
+    padding:     var(--wcard-head-pad, 12px 16px);
   }
 
   &__title {
@@ -120,12 +122,12 @@ export default {
     font-size:  14px;
     min-height: 0;
     overflow:   auto;
-    padding:    0 16px 16px;
+    padding:    var(--wcard-body-pad, 0 16px 16px);
   }
 
   // A card with no heading (the banner, a bare links box) still owes its content the same inset.
   &__body:first-child {
-    padding-top: 16px;
+    padding: var(--wcard-solo-pad, 16px);
   }
 
   &__msg {
