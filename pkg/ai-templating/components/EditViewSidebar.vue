@@ -10,12 +10,15 @@ import {
 // The "Edit view" drawer. Three tabs, and the split between them is the point:
 //
 //   ADD     what goes on the grid — building blocks (a shape, you say what it shows) and
-//           ready-made widgets (the same shapes with their data already chosen). Plus Liz, who
-//           builds one from a sentence.
+//           ready-made widgets (the same shapes with their data already chosen).
 //   LAYOUT  how the SELECTED widget sits — width, height, spacing, and exact pixels under Advanced.
 //   VIEW    what is true of the WHOLE view — its name, its gap, whether it is your default.
 //
-// Everything is emitted; the drawer holds only its own tab, search box and Advanced toggle.
+// Liz is not one of the tabs. In the design she is the drawer's OTHER face: the same 380px slot,
+// titled "Liz" with a Go back out of it, rather than a box wedged above the catalog. So the Add tab
+// is only ever the catalog, which is what it is for.
+//
+// Everything is emitted; the drawer holds only its own face, tab, search box and Advanced toggle.
 export default {
   name:       'EditViewSidebar',
   components: { CatalogTile, LizWidgetPanel },
@@ -70,6 +73,8 @@ export default {
 
   data() {
     return {
+      // Which face the drawer is showing: the editor, or Liz.
+      face:         'edit',
       tab:          'add',
       search:       '',
       advancedOpen: false,
@@ -143,11 +148,40 @@ export default {
 <template>
   <aside class="evs">
     <header class="evs__head">
-      <h3 class="evs__title">
+      <h3
+        v-if="face === 'liz'"
+        class="evs__title"
+      >
+        Liz
+      </h3>
+      <h3
+        v-else
+        class="evs__title"
+      >
         Edit view<template v-if="view">
           &nbsp;-&nbsp; {{ view.name }}
         </template>
       </h3>
+
+      <!-- The design's nav slot, left of Close: into Liz from the editor, back out of her. -->
+      <button
+        v-if="face === 'liz'"
+        class="evs__nav"
+        @click="face = 'edit'"
+      >
+        <i class="icon icon-chevron-left" />
+        Go back
+      </button>
+      <button
+        v-else-if="lizEnabled"
+        class="evs__nav"
+        @click="face = 'liz'"
+      >
+        <!-- icon-chat does not exist in the shell's font — it renders nothing at all. -->
+        <i class="icon icon-comment" />
+        Ask Liz
+      </button>
+
       <button
         class="evs__close"
         title="Close"
@@ -158,7 +192,16 @@ export default {
       </button>
     </header>
 
-    <nav class="evs__tabs">
+    <LizWidgetPanel
+      v-if="face === 'liz'"
+      :view-name="view ? view.name : ''"
+      @preview="$emit('liz-preview', $event)"
+    />
+
+    <nav
+      v-if="face === 'edit'"
+      class="evs__tabs"
+    >
       <button
         v-for="t in [{ id: 'add', label: 'Add' }, { id: 'layout', label: 'Layout' }, { id: 'view', label: 'View' }]"
         :key="t.id"
@@ -171,6 +214,7 @@ export default {
     </nav>
 
     <div
+      v-if="face === 'edit'"
       class="evs__body"
       :class="{ 'evs__body--layout': tab === 'layout' }"
     >
@@ -192,8 +236,11 @@ export default {
           class="evs__new"
         >
           <h4 class="evs__new-title">
-            New view<template v-if="startedFrom">
-              , started from {{ startedFrom }}
+            <template v-if="startedFrom">
+              New view, started from {{ startedFrom }}
+            </template>
+            <template v-else>
+              New view
             </template>
           </h4>
           <p class="evs__hint">
@@ -219,12 +266,6 @@ export default {
             Nothing is saved until you press Save. Cancel throws the new view away.
           </p>
         </section>
-
-        <LizWidgetPanel
-          v-if="lizEnabled"
-          :view-name="view ? view.name : ''"
-          @preview="$emit('liz-preview', $event)"
-        />
 
         <input
           v-model="search"
@@ -551,6 +592,32 @@ export default {
     white-space:   nowrap;
   }
 
+  // The design's history nav, between the title and Close: a quiet 12px text button.
+  &__nav {
+    align-items: center;
+    background:  transparent;
+    border:      none;
+    color:       var(--link);
+    cursor:      pointer;
+    display:     flex;
+    font-size:   12px;
+    gap:         4px;
+    height:      32px;
+    line-height: 20px;
+    margin-left: auto;
+    margin-right: 4px;
+    min-height:  0;
+    padding:     0 6px;
+
+    i {
+      font-size: 14px;
+    }
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
   &__close {
     background:  transparent;
     border:      none;
@@ -802,39 +869,48 @@ export default {
   }
 
   // ---- the new-view card ----
+  // The design's own numbers: a 4px card, 12px inside it, 8px between its parts, and it sits in the
+  // body's 10px rhythm like everything else rather than carrying a margin of its own.
   &__new {
+    background:     var(--body-bg);
     border:         1px solid var(--border);
     border-radius:  4px;
     display:        flex;
     flex-direction: column;
-    gap:            10px;
-    margin-bottom:  8px;
-    padding:        14px;
+    gap:            8px;
+    padding:        12px;
   }
 
   &__new-title {
     font-size:   14px;
-    font-weight: 600;
+    font-weight: 700;
+    line-height: 17px;
     margin:      0;
   }
 
   &__chips {
     display:   flex;
     flex-wrap: wrap;
-    gap:       8px;
+    gap:       6px;
   }
 
+  // A 24px pill: 12px label, 4/10 inside, the drawer's own hairline round it. The shell's global
+  // .btn rule is why the height is stated three ways.
   &__chip {
     background:    transparent;
-    border:        1px solid var(--primary);
-    border-radius: 14px;
+    border:        1px solid var(--border);
+    border-radius: 12px;
+    box-sizing:    border-box;
     color:         var(--link);
     cursor:        pointer;
-    font-size:     13px;
-    padding:       4px 12px;
+    font-size:     12px;
+    height:        24px;
+    line-height:   14px;
+    min-height:    24px;
+    padding:       4px 10px;
 
     &:hover {
-      background: var(--accent-btn);
+      border-color: var(--primary);
     }
   }
 

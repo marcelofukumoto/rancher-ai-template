@@ -4,7 +4,11 @@ import { normalizeWidget } from '../templating/view-model';
 import { blockName, catalogEntry } from '../templating/widget-catalog';
 import { fieldLabel } from '../templating/widget-data';
 
-// "Describe what you want to see" — Liz turns a sentence into a widget.
+// LIZ — she turns a sentence into a widget.
+//
+// This is the drawer's other FACE, not a box inside the Add tab: the design gives Liz the whole
+// 380px slot, titled by the drawer header, with a Go back out of her. So there is no heading in
+// here — the header is the heading.
 //
 // The important part is not the asking, it is the READ-BACK. Liz answers with a widget spec, and
 // this panel shows, in plain words, how she read the sentence: which building block, which
@@ -122,11 +126,6 @@ export default {
 
 <template>
   <section class="liz">
-    <h4 class="liz__title">
-      <i class="icon icon-chat" />
-      Describe what you want to see
-    </h4>
-
     <textarea
       v-model="prompt"
       class="liz__input"
@@ -191,13 +190,17 @@ export default {
 
 <style lang="scss" scoped>
 .liz {
-  border:         1px solid var(--border);
-  border-radius:  4px;
   display:        flex;
+  flex:           1 1 auto;
   flex-direction: column;
-  gap:            10px;
-  margin-bottom:  8px;
-  padding:        14px;
+  gap:            14px;
+  overflow-y:     auto;
+  padding:        16px;
+
+  // A column flex container shrinks its items before it overflows; nothing in here shrinks.
+  > * {
+    flex: 0 0 auto;
+  }
 
   &__title {
     align-items: center;
