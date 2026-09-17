@@ -1,10 +1,13 @@
 <script>
 import PaginatedResourceTable from '@shell/components/PaginatedResourceTable.vue';
+import ResourceTable from '@shell/components/ResourceTable.vue';
 import { STATE, NAME, NAMESPACE, AGE } from '@shell/config/table-headers';
 import WidgetCard from './WidgetCard.vue';
 import {
-  applyFilter, applySort, fieldValue, fieldLabel, storeForType, typeColumns, withoutDetailLink
+  applyFilter, applySort, fieldValue, fieldLabel, storeForType, typeColumns, withoutDetailLink,
+  fetchClusterPage
 } from '../../templating/widget-data';
+import { isDownstream } from '../../templating/widget-catalog';
 
 // TABLE — "Rows of a resource with the columns you pick".
 //
@@ -39,9 +42,17 @@ const GENERIC_HEADERS = {
   created:   AGE,
 };
 
+// A CLUSTER column, added only when rows come from more than one. `widgetCluster` is stamped on
+// each row by fetchClusterPage — without it a merged table cannot say where a row came from.
+const CLUSTER_COLUMN = {
+  name: 'widgetCluster', label: 'Cluster', value: 'widgetCluster', sort: false, search: false
+};
+
 export default {
   name:       'WidgetTable',
-  components: { PaginatedResourceTable, WidgetCard },
+  components: {
+    PaginatedResourceTable, ResourceTable, WidgetCard
+  },
 
   props: {
     widget: {
@@ -50,7 +61,24 @@ export default {
     },
   },
 
+  data() {
+    return {
+      rows: [], pageCount: 0, truncated: false, serverPaged: false, loadingPage: false, pageError: '',
+    };
+  },
+
   computed: {
+    // A Kubernetes type lives once PER CLUSTER, so it is read from named clusters rather than from
+    // the global API. That is a different fetch, a different table, and a question the settings
+    // panel has to have asked.
+    downstream() {
+      return isDownstream(this.widget.resource);
+    },
+
+    clusters() {
+      return this.widget.clusters || [];
+    },
+
     inStore() {
       return storeForType(this.$store.getters, this.widget.resource);
     },
@@ -100,9 +128,102 @@ export default {
     perPage() {
       return this.widget.limit || 10;
     },
+
+    /**
+     * The rows the downstream table draws.
+     *
+     * `local-filter` belongs to the resource-fetch MIXIN, not to ResourceTable — passing it to a
+     * bare table does nothing at all. The filter is applied here instead, which is also why a
+     * filtered widget is fetched whole (see fetchClusterPage): you cannot filter rows you never
+     * asked for.
+     */
+    visibleRows() {
+      return this.filterRows(this.rows);
+    },
+
+    // Headers for the downstream table, plus the Cluster column when the rows are mixed.
+    clusterHeaders() {
+      return this.clusters.length > 1 ? [...this.headers, CLUSTER_COLUMN] : this.headers;
+    },
+
+    // External pagination means "the rows you were handed ARE the page" — the table shows them all
+    // and trusts the count. That is true of a single cluster, where the backend sliced the page, and
+    // false of a merge, where we hold every row: there the table must do its own paging or it draws
+    // all 144 of them under a footer claiming 11-20.
+    externalResult() {
+      return { count: this.pageCount };
+    },
+
+    downstreamMessage() {
+      if (!this.clusters.length) {
+        return 'Choose one or more clusters in this widget\u2019s settings — a Kubernetes type lives once per cluster.';
+      }
+
+      return this.pageError;
+    },
+  },
+
+  watch: {
+    'widget.resource'() {
+      this.loadPage();
+    },
+    'widget.clusters'() {
+      this.loadPage();
+    },
+    'widget.sortBy'() {
+      this.loadPage();
+    },
+    'widget.sortDir'() {
+      this.loadPage();
+    },
+    // A filter changes HOW the rows are fetched, not just which are drawn: with one set the whole
+    // set has to be here to filter, so it cannot be left to the backend to page.
+    'widget.filter'() {
+      this.loadPage();
+    },
+  },
+
+  created() {
+    if (this.downstream) {
+      this.loadPage();
+    }
   },
 
   methods: {
+    // The table asks for a page; with one cluster that is a real request for that page, with
+    // several it is a re-merge. Either way the table is handed rows and a count.
+    async loadPage(pagination) {
+      if (!this.downstream) {
+        return;
+      }
+
+      this.loadingPage = true;
+      this.pageError = '';
+
+      try {
+        const res = await fetchClusterPage(this.$store, {
+          resource: this.widget.resource,
+          clusters: this.clusters,
+          page:     pagination?.page || 1,
+          pageSize: pagination?.perPage || this.perPage,
+          sortBy:   this.widget.sortBy,
+          sortDir:  this.widget.sortDir,
+          filtered: !!this.widget.filter || (this.widget.where === 'custom' && !!this.widget.targets?.length),
+        });
+
+        this.rows = res.rows;
+        this.pageCount = res.count;
+        this.truncated = res.truncated;
+        this.serverPaged = res.serverPaged;
+      } catch (e) {
+        this.rows = [];
+        this.pageCount = 0;
+        this.pageError = e?.message || `Could not read ${ this.widget.resource } from those clusters.`;
+      } finally {
+        this.loadingPage = false;
+      }
+    },
+
     headerFor(id) {
       const own = this.typeHeaders[id];
 
@@ -144,7 +265,41 @@ export default {
 </script>
 
 <template>
+  <!-- A type read from named clusters: we fetch the page ourselves, because the cluster is not
+     something PaginatedResourceTable can be told about. -->
   <WidgetCard
+    v-if="downstream"
+    :title="widget.title"
+    :loading="loadingPage && !rows.length"
+    :error="downstreamMessage"
+  >
+    <ResourceTable
+      :schema="schema"
+      :rows="visibleRows"
+      :headers="clusterHeaders"
+      :loading="loadingPage"
+      :external-pagination-enabled="serverPaged"
+      :external-pagination-result="externalResult"
+      :table-actions="false"
+      :row-actions="false"
+      :namespaced="false"
+      :groupable="false"
+      :search="false"
+      :rows-per-page="perPage"
+      key-field="id"
+      @pagination-changed="loadPage"
+    />
+    <p
+      v-if="truncated"
+      class="wtable__note"
+    >
+      Showing the first rows from each cluster. Several clusters cannot be paged as one — each is a
+      separate API — so pick a single cluster to page through all of it.
+    </p>
+  </WidgetCard>
+
+  <WidgetCard
+    v-else
     :title="widget.title"
     :error="schema ? '' : `Rancher has no &quot;${ widget.resource }&quot; here — the type may not be installed, or you may not have permission to see it.`"
   >
@@ -171,5 +326,12 @@ export default {
 // The table brings its own top margin for the toolbar it is not showing here.
 .wcard :deep(.sortable-table-header) {
   margin-bottom: 0;
+}
+
+.wtable__note {
+  color:       var(--muted);
+  font-size:   12px;
+  line-height: 1.35;
+  margin:      8px 0 0;
 }
 </style>

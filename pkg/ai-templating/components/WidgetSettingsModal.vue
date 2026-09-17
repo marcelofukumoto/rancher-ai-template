@@ -1,7 +1,7 @@
 <script>
-import { TABLE_COLUMNS, FIELDS, typeColumns } from '../templating/widget-data';
+import { TABLE_COLUMNS, FIELDS, typeColumns, clusterOptions } from '../templating/widget-data';
 import {
-  SUGGESTED_RESOURCES, blockName, WIDGET_TABLE, WIDGET_LIST, WIDGET_TEXT, WIDGET_LINKS,
+  SUGGESTED_RESOURCES, blockName, isDownstream, WIDGET_TABLE, WIDGET_LIST, WIDGET_TEXT, WIDGET_LINKS,
   WIDGET_TIME_SERIES, WIDGET_BANNER, WIDGET_CLUSTER_TABLE, WIDGET_OVERVIEW, WIDGET_NAV
 } from '../templating/widget-catalog';
 import { NAV_DESTINATIONS } from './widgets/WidgetNav.vue';
@@ -102,6 +102,19 @@ export default {
 
     hasColumns() {
       return this.draft.kind === WIDGET_TABLE;
+    },
+
+    /**
+     * A Kubernetes type exists once per CLUSTER, so one has to be named before there is anything to
+     * show. Asking only for downstream types keeps the question off the widgets that do not have it
+     * — a Cluster or a User is global, there is nothing to pick.
+     */
+    needsClusters() {
+      return this.readsData && isDownstream(this.draft.resource);
+    },
+
+    clusters() {
+      return clusterOptions(this.$store.getters);
     },
 
     /**
@@ -251,6 +264,23 @@ export default {
   },
 
   methods: {
+    toggleCluster(id) {
+      const chosen = [...(this.draft.clusters || [])];
+      const at = chosen.indexOf(id);
+
+      if (at >= 0) {
+        chosen.splice(at, 1);
+      } else {
+        chosen.push(id);
+      }
+
+      this.draft.clusters = chosen;
+    },
+
+    hasCluster(id) {
+      return (this.draft.clusters || []).includes(id);
+    },
+
     toggleColumn(id) {
       const columns = [...(this.draft.columns || [])];
       const at = columns.indexOf(id);
@@ -377,6 +407,27 @@ export default {
           >
           <p class="wsm__hint">
             Labels or fields, such as env=prod or state != Active.
+          </p>
+        </template>
+
+        <template v-if="needsClusters">
+          <label class="wsm__label">Clusters</label>
+          <div class="wsm__columns wsm__columns--wide">
+            <label
+              v-for="cluster in clusters"
+              :key="cluster.id"
+            >
+              <input
+                type="checkbox"
+                :checked="hasCluster(cluster.id)"
+                @change="toggleCluster(cluster.id)"
+              >
+              {{ cluster.label }}
+            </label>
+          </div>
+          <p class="wsm__hint">
+            This type lives once per cluster. Pick one to page through all of it; pick several and
+            the rows are merged, with a Cluster column — several clusters cannot be paged as one.
           </p>
         </template>
 

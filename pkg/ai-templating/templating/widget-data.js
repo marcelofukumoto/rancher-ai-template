@@ -392,3 +392,137 @@ export function stateColor(label) {
 
   return 'info';
 }
+
+// ---- downstream clusters -------------------------------------------------------------------------
+// A Kubernetes type does not exist once. It exists once PER CLUSTER, behind that cluster's own Steve
+// API at /k8s/clusters/<id>/v1. The management store can address it directly — give findPage the
+// url and `transient: true` and it returns properly classed models (a Pod with its real state and
+// name) without caching them, which matters: two clusters' pods would otherwise collide in the
+// store under the same type.
+
+// The names a table sorts by in the BROWSER are not the names Steve sorts by. A pod's Name column
+// sorts on `nameSort`, a computed property that exists only in the dashboard; ask the API for it and
+// it answers 422 "column is invalid" and the whole page fails. These are the few that have a real
+// field behind them.
+const STEVE_SORT = {
+  nameSort:          'metadata.name',
+  namespace:         'metadata.namespace',
+  stateSort:         'metadata.state.name',
+  creationTimestamp: 'metadata.creationTimestamp',
+};
+
+// What Steve will sort any type by, on top of whatever that type's own schema declares.
+const STEVE_SORT_ALWAYS = ['metadata.name', 'metadata.namespace', 'id', 'metadata.state.name', 'metadata.creationTimestamp'];
+
+/**
+ * The field Steve can sort this column by, or null if it cannot.
+ *
+ * Returning null is the point: a sort the API rejects fails the REQUEST, so an untranslatable
+ * column has to mean "ask unsorted" rather than "ask and break".
+ */
+export function steveSortField(getters, resource, column) {
+  if (!column) {
+    return null;
+  }
+
+  const schema = getters[`${ storeForType(getters, resource) }/schemaFor`]?.(resource);
+  const header = (getters['type-map/headersFor']?.(schema) || []).find((h) => h.name === column);
+  const raw = Array.isArray(header?.sort) ? header.sort[0] : (header?.sort || column);
+  const field = STEVE_SORT[`${ raw }`.split(':')[0]] || `${ raw }`.split(':')[0];
+
+  if (STEVE_SORT_ALWAYS.includes(field)) {
+    return field;
+  }
+
+  // The schema lists the columns the API indexes, as JSONPath — `$.spec.nodeName` is `spec.nodeName`.
+  const known = (schema?.attributes?.columns || []).some(
+    (c) => `${ c.field }`.replace('$.', '').replace('[', '.').replace(']', '') === field
+  );
+
+  return known ? field : null;
+}
+
+/** Every cluster the user can see, as picker options, by the name a person would recognise. */
+export function clusterOptions(getters) {
+  const clusters = getters['management/all']?.('management.cattle.io.cluster') || [];
+
+  return clusters
+    .map((c) => ({ id: c.id, label: c.nameDisplay || c.spec?.displayName || c.id }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** A cluster id back to the name it was chosen by — ids are `c-m-…`, which nobody recognises. */
+export function clusterLabel(getters, id) {
+  return clusterOptions(getters).find((c) => c.id === id)?.label || id;
+}
+
+/**
+ * One page of a type, read from one or more named clusters.
+ *
+ * With ONE cluster and no filter this is true server-side pagination: the backend is asked for that
+ * page and returns it with the total count.
+ *
+ * Otherwise there is no such thing. Several clusters are several APIs, each with its own paging, and
+ * no backend can answer "rows 9 to 16 of the three of them combined". A widget FILTER is the same
+ * problem from the other side: it is applied here, so filtering one page of ten would search ten
+ * rows and call the rest absent. Both cases ask each cluster for up to `mergeCap` rows and hand the
+ * lot over to be filtered and paged locally. `truncated` says when a cluster had more than the cap,
+ * because a total that quietly stops being a total is worse than a visible limit.
+ */
+export async function fetchClusterPage(store, {
+  resource, clusters, page = 1, pageSize = 10, sortBy, sortDir, filtered = false, mergeCap = 500
+}) {
+  const ids = (clusters || []).filter(Boolean);
+
+  if (!resource || !ids.length) {
+    return {
+      rows: [], count: 0, truncated: false, serverPaged: false
+    };
+  }
+
+  const field = steveSortField(store.getters, resource, sortBy);
+  const sort = field ? [{ field, asc: sortDir !== 'desc' }] : [];
+  const ask = (id, args) => store.dispatch('management/findPage', {
+    type: resource,
+    opt:  {
+      url: `/k8s/clusters/${ encodeURIComponent(id) }/v1/${ resource }`, transient: true, watch: false, pagination: args
+    },
+  });
+
+  if (ids.length === 1 && !filtered) {
+    const res = await ask(ids[0], {
+      page, pageSize, sort
+    });
+
+    return {
+      rows:        withCluster(res?.data, ids[0], store.getters),
+      count:       res?.pagination?.result?.count ?? res?.data?.length ?? 0,
+      truncated:   false,
+      serverPaged: true,
+    };
+  }
+
+  const pages = await Promise.all(ids.map((id) => ask(id, {
+    page: 1, pageSize: mergeCap, sort
+  })
+    .then((res) => ({ id, res }))
+    .catch(() => ({ id, res: null }))));
+
+  const rows = pages.flatMap(({ id, res }) => withCluster(res?.data, id, store.getters));
+  const truncated = pages.some(({ res }) => (res?.pagination?.result?.count ?? 0) > mergeCap);
+
+  return {
+    rows, count: rows.length, truncated, serverPaged: false
+  };
+}
+
+/** Rows carry the cluster they came from, so a merged table can say which is which. */
+function withCluster(rows, clusterId, getters) {
+  const label = clusterLabel(getters, clusterId);
+
+  return (rows || []).map((row) => {
+    row.widgetCluster = label;
+
+    return row;
+  });
+}

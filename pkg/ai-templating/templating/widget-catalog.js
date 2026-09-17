@@ -11,7 +11,7 @@
 // `span` is the column width the widget lands on the grid with.
 
 import {
-  MANAGEMENT, CAPI, EVENT, FLEET, LONGHORN
+  MANAGEMENT, CAPI, EVENT, FLEET, LONGHORN, POD, SERVICE, INGRESS, PVC, NODE, WORKLOAD_TYPES
 } from '@shell/config/types';
 
 /** Every widget kind the renderer knows. */
@@ -257,6 +257,20 @@ export function searchCatalog(list, query) {
  * The resources offered in a widget's "Resource" picker. Any type Rancher knows can be typed in,
  * but these are the ones worth suggesting.
  */
+/**
+ * The types the Resource picker suggests, and — the part that matters — WHERE each one lives.
+ *
+ * Rancher serves two different APIs and a widget has to know which it is asking:
+ *
+ *   GLOBAL      /v1 on the Rancher server. Its own management types (Cluster, User, Project,
+ *               Fleet) plus, incidentally, the LOCAL cluster's own Kubernetes resources.
+ *   DOWNSTREAM  /k8s/clusters/<id>/v1, a separate Steve API per cluster. Every Kubernetes type
+ *               lives here, once per cluster, so a widget showing one has to say WHICH cluster.
+ *
+ * `downstream: true` is what makes the settings panel ask for clusters. Without it a Pod widget
+ * would silently show the local cluster's pods and call them "Pods", which is the sort of quiet
+ * wrong answer a dashboard should never give.
+ */
 export const SUGGESTED_RESOURCES = [
   { value: CAPI.RANCHER_CLUSTER, label: 'Cluster (provisioning.cattle.io)' },
   { value: MANAGEMENT.CLUSTER, label: 'Cluster (management.cattle.io)' },
@@ -266,7 +280,48 @@ export const SUGGESTED_RESOURCES = [
   { value: EVENT, label: 'Event (v1)' },
   { value: FLEET.GIT_REPO, label: 'GitRepo (fleet.cattle.io)' },
   { value: FLEET.BUNDLE, label: 'Bundle (fleet.cattle.io)' },
-  // Kept as a SUGGESTION rather than a ready-made: Longhorn usually runs on a downstream cluster,
-  // so this only resolves where it is installed on the local one.
-  { value: LONGHORN.VOLUMES, label: 'Volume (longhorn.io)' },
+
+  {
+    value: POD, label: 'Pod', downstream: true
+  },
+  {
+    value: WORKLOAD_TYPES.DEPLOYMENT, label: 'Deployment (apps)', downstream: true
+  },
+  {
+    value: WORKLOAD_TYPES.DAEMON_SET, label: 'DaemonSet (apps)', downstream: true
+  },
+  {
+    value: WORKLOAD_TYPES.STATEFUL_SET, label: 'StatefulSet (apps)', downstream: true
+  },
+  {
+    value: WORKLOAD_TYPES.JOB, label: 'Job (batch)', downstream: true
+  },
+  {
+    value: WORKLOAD_TYPES.CRON_JOB, label: 'CronJob (batch)', downstream: true
+  },
+  {
+    value: NODE, label: 'Node (v1)', downstream: true
+  },
+  {
+    value: SERVICE, label: 'Service (v1)', downstream: true
+  },
+  {
+    value: INGRESS, label: 'Ingress (networking.k8s.io)', downstream: true
+  },
+  {
+    value: PVC, label: 'PersistentVolumeClaim (v1)', downstream: true
+  },
+  {
+    value: LONGHORN.VOLUMES, label: 'Volume (longhorn.io)', downstream: true
+  },
 ];
+
+/**
+ * Does this type have to be read from a named cluster?
+ *
+ * Only the suggestions say so — a type typed in by hand is assumed to be global, because that is
+ * the API this extension can always reach.
+ */
+export function isDownstream(resource) {
+  return !!SUGGESTED_RESOURCES.find((r) => r.value === resource)?.downstream;
+}
