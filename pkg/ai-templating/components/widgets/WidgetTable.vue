@@ -57,7 +57,15 @@ export default {
 
   data() {
     return {
-      rows: [], pageCount: 0, truncated: false, serverPaged: false, loadingPage: false, pageError: '',
+      rows:        [],
+      pageCount:   0,
+      truncated:   false,
+      serverPaged: false,
+      loadingPage: false,
+      pageError:   '',
+      page:        1,
+      // The last request actually made, so the same one is not made three times over (see loadPage).
+      lastKey:     '',
     };
   },
 
@@ -71,6 +79,19 @@ export default {
 
     cluster() {
       return this.widget.cluster || '';
+    },
+
+    // A filter is applied here rather than by the API, so it changes HOW the rows are fetched.
+    filtered() {
+      return !!this.widget.filter || (this.widget.where === 'custom' && !!this.widget.targets?.length);
+    },
+
+    /**
+     * Everything the request depends on, except which page. When this changes the widget is asking
+     * a different question, so the answer starts again at page one.
+     */
+    queryKey() {
+      return JSON.stringify([this.widget.resource, this.cluster, this.widget.sortBy, this.widget.sortDir, this.filtered]);
     },
 
     inStore() {
@@ -153,21 +174,8 @@ export default {
   },
 
   watch: {
-    'widget.resource'() {
-      this.loadPage();
-    },
-    'widget.cluster'() {
-      this.loadPage();
-    },
-    'widget.sortBy'() {
-      this.loadPage();
-    },
-    'widget.sortDir'() {
-      this.loadPage();
-    },
-    // A filter changes HOW the rows are fetched, not just which are drawn: with one set the whole
-    // set has to be here to filter, so it cannot be left to the backend to page.
-    'widget.filter'() {
+    queryKey() {
+      this.page = 1;
       this.loadPage();
     },
   },
@@ -179,13 +187,31 @@ export default {
   },
 
   methods: {
-    // The table asks for a page; with one cluster that is a real request for that page, with
-    // several it is a re-merge. Either way the table is handed rows and a count.
+    /**
+     * Fetch the page the widget should be showing.
+     *
+     * THREE different things ask for it whenever a widget appears or is changed, and each is right
+     * to: the component's own created hook, the watcher on what the widget asks for, and
+     * SortableTable, which emits `pagination-changed` when it mounts. Three requests for the same
+     * rows — the table would fill, blank and fill again. So the request is keyed by everything it
+     * depends on and an identical one is simply not repeated; a failed one clears the key, because
+     * the next ask should be a real retry rather than a silent no-op.
+     */
     async loadPage(pagination) {
       if (!this.downstream) {
         return;
       }
 
+      const page = pagination?.page || this.page;
+      const pageSize = pagination?.perPage || this.perPage;
+      const key = `${ this.queryKey }|${ page }|${ pageSize }`;
+
+      if (key === this.lastKey) {
+        return;
+      }
+
+      this.lastKey = key;
+      this.page = page;
       this.loadingPage = true;
       this.pageError = '';
 
@@ -193,11 +219,11 @@ export default {
         const res = await fetchClusterPage(this.$store, {
           resource: this.widget.resource,
           cluster:  this.cluster,
-          page:     pagination?.page || 1,
-          pageSize: pagination?.perPage || this.perPage,
+          page,
+          pageSize,
           sortBy:   this.widget.sortBy,
           sortDir:  this.widget.sortDir,
-          filtered: !!this.widget.filter || (this.widget.where === 'custom' && !!this.widget.targets?.length),
+          filtered: this.filtered,
         });
 
         this.rows = res.rows;
@@ -207,6 +233,7 @@ export default {
       } catch (e) {
         this.rows = [];
         this.pageCount = 0;
+        this.lastKey = '';
         this.pageError = e?.message || `Could not read ${ this.widget.resource } from that cluster.`;
       } finally {
         this.loadingPage = false;
