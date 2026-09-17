@@ -21,6 +21,12 @@
 /** Node types allowed in a panel's tree. */
 export const NODE_ORGANIZER = 'organizer';
 export const NODE_TEMPLATE = 'template';
+export const NODE_WIDGET = 'widget';
+
+/** True for a LEAF node — a widget or a stored template. Only organizers have children. */
+export function isLeaf(node) {
+  return !!node && (node.type === NODE_TEMPLATE || node.type === NODE_WIDGET);
+}
 
 /**
  * A PANEL is either a layout (a root organizer of templates) or the STOCK Rancher home rendered
@@ -33,8 +39,92 @@ export const PANEL_STOCK = 'stock';
 /** Organizers lay their children out on this many columns. */
 export const GRID_COLUMNS = 12;
 
-/** Default column span for a newly dropped template (half a row). */
+/** Default column span for a newly dropped widget (half a row). */
 export const DEFAULT_COL_SPAN = 6;
+
+/** The gap between widgets. One value for the whole VIEW (a view-level setting, not per widget). */
+export const DEFAULT_GAP = 20;
+
+/** One grid row. `2 rows` is two of these plus the gap between them. */
+export const ROW_HEIGHT = 156;
+
+/**
+ * WIDTH is chosen from four presets rather than 12 free columns — the four that read well on a
+ * dashboard. `Advanced → Column span` still exposes the raw twelfths underneath.
+ */
+export const WIDTH_PRESETS = [
+  {
+    id: 'third', label: '1/3', span: 4
+  },
+  {
+    id: 'half', label: '1/2', span: 6
+  },
+  {
+    id: 'twoThirds', label: '2/3', span: 8
+  },
+  {
+    id: 'full', label: 'Full', span: GRID_COLUMNS
+  },
+];
+
+/** The raw column spans offered under Advanced. */
+export const COLUMN_SPANS = [4, 6, 8, 12];
+
+/** HEIGHT presets: fit the content, or a fixed number of grid rows. */
+export const HEIGHT_PRESETS = [
+  {
+    id: 'fit', label: 'Fit content', rows: 0
+  },
+  {
+    id: 'rows2', label: '2 rows', rows: 2
+  },
+  {
+    id: 'rows3', label: '3 rows', rows: 3
+  },
+];
+
+/** SPACING presets set the widget's padding. Advanced overrides them with exact pixels. */
+export const SPACING_PRESETS = [
+  {
+    id: 'compact', label: 'Compact', padding: 8
+  },
+  {
+    id: 'default', label: 'Default', padding: 16
+  },
+  {
+    id: 'spacious', label: 'Spacious', padding: 24
+  },
+];
+
+/** The width preset a column span corresponds to (null when it matches none of them). */
+export function widthPresetOf(span) {
+  return WIDTH_PRESETS.find((p) => p.span === clampSpan(span))?.id || null;
+}
+
+/** Height in px for N grid rows, including the gaps they span. */
+export function rowsHeight(rows, gap = DEFAULT_GAP) {
+  return (rows * ROW_HEIGHT) + ((rows - 1) * gap);
+}
+
+/** The height preset a stored height corresponds to ('fit' for auto / anything unrecognized). */
+export function heightPresetOf(height, gap = DEFAULT_GAP) {
+  return HEIGHT_PRESETS.find((p) => p.rows && height === rowsHeight(p.rows, gap))?.id || 'fit';
+}
+
+/** The stored height for a height preset id. */
+export function heightForPreset(id, gap = DEFAULT_GAP) {
+  const preset = HEIGHT_PRESETS.find((p) => p.id === id);
+
+  return preset?.rows ? rowsHeight(preset.rows, gap) : 'auto';
+}
+
+/** The spacing preset a node's padding corresponds to (null once Advanced has overridden it). */
+export function spacingPresetOf(padding) {
+  const p = normalizeSides(padding);
+  const same = p.top === p.right && p.right === p.bottom && p.bottom === p.left;
+
+  return (same && SPACING_PRESETS.find((s) => s.padding === p.top)?.id) || null;
+}
 
 let idSeq = 0;
 
@@ -42,6 +132,15 @@ function uid(prefix) {
   idSeq += 1;
 
   return `${ prefix }-${ Date.now().toString(36) }${ idSeq.toString(36) }`;
+}
+
+/**
+ * A fresh id with the same guarantees the factories use. Exported because the editor also mints ids
+ * (forking a view, duplicating one) and two of those in the same millisecond must not collide —
+ * which is exactly what a hand-rolled `Date.now()` id does.
+ */
+export function newId(prefix = 'id') {
+  return uid(prefix);
 }
 
 // ---- value normalization ----
@@ -133,6 +232,76 @@ export function newTemplateNode(template, opts = {}) {
   };
 }
 
+/**
+ * Normalize a WIDGET spec — the declarative description of what one widget shows. Every field is
+ * optional; a widget with only a `kind` renders its own sensible default.
+ *
+ *   kind        which building block: table | counters | statusSummary | list | barChart |
+ *               timeSeries | text | links | banner
+ *   title       heading shown on the widget
+ *   resource    the Rancher/Kubernetes type it reads (any kind Rancher knows, including CRDs)
+ *   where       'view'   — the same clusters the view covers
+ *               'custom' — only the clusters/namespaces in `targets`
+ *   filter      a labels-or-fields expression: `env=prod`, `state != Active`
+ *   columns     table columns to show, in order
+ *   sortBy      field to sort on, `sortDir` 'asc' | 'desc'
+ *   groupBy     field a bar chart / status summary groups by
+ *   limit       how many rows a list shows
+ *   body        markdown (text widget)
+ *   links       [{ label, url }] (links widget)
+ *   url         Grafana panel URL (time series widget)
+ */
+export function normalizeWidget(widget) {
+  const w = widget && typeof widget === 'object' ? widget : {};
+  const str = (v, fallback = '') => (typeof v === 'string' ? v : fallback);
+  const arr = (v) => (Array.isArray(v) ? v : []);
+
+  const out = {
+    kind:     str(w.kind, 'text'),
+    title:    str(w.title),
+    resource: str(w.resource),
+    where:    w.where === 'custom' ? 'custom' : 'view',
+    targets:  arr(w.targets).filter((t) => typeof t === 'string'),
+    filter:   str(w.filter),
+    columns:  arr(w.columns).filter((c) => typeof c === 'string'),
+    sortBy:   str(w.sortBy),
+    sortDir:  w.sortDir === 'desc' ? 'desc' : 'asc',
+    groupBy:  str(w.groupBy),
+    limit:    Number.isFinite(Number(w.limit)) && Number(w.limit) > 0 ? Math.round(Number(w.limit)) : 0,
+    body:     str(w.body),
+    links:    arr(w.links).filter((l) => l && typeof l === 'object').map((l) => ({ label: str(l.label), url: str(l.url) })),
+    url:      str(w.url),
+  };
+
+  // `subtitle` and `image` are banner-only extras; keep them only when set so stored specs stay small.
+  if (w.subtitle) {
+    out.subtitle = str(w.subtitle);
+  }
+  if (w.image) {
+    out.image = str(w.image);
+  }
+
+  return out;
+}
+
+/** A new WIDGET leaf — one building block on the grid, sized by its column span. */
+export function newWidgetNode(widget, opts = {}) {
+  const spec = normalizeWidget(typeof widget === 'string' ? { kind: widget } : widget);
+  const padding = opts.padding ?? {
+    top: 16, right: 16, bottom: 16, left: 16
+  };
+
+  return {
+    id:      opts.id || uid('w'),
+    type:    NODE_WIDGET,
+    widget:  spec,
+    colSpan: clampSpan(opts.colSpan ?? DEFAULT_COL_SPAN),
+    height:  normalizeSize(opts.height, 'auto'),
+    margin:  normalizeSides(opts.margin),
+    padding: normalizeSides(padding),
+  };
+}
+
 /** The ROOT organizer of a panel: always fills the panel (100% x 100%). */
 export function newRootOrganizer(children = []) {
   return newOrganizer({
@@ -140,10 +309,16 @@ export function newRootOrganizer(children = []) {
   });
 }
 
-/** A new PANEL (a tab, once a view has more than one). Starts with one empty organizer to drop into. */
-export function newPanel(name) {
+/**
+ * A new PANEL — one named VIEW in the tab strip. Starts with one empty organizer to drop into.
+ * `gap` is the space between its widgets: one value for the whole view (see the Layout tab).
+ */
+export function newPanel(name, opts = {}) {
   return {
-    id: uid('panel'), name: name || 'Panel', organizer: ensureTrailingEmpty(newRootOrganizer()),
+    id:        opts.id || uid('panel'),
+    name:      name || 'Untitled view',
+    gap:       Number.isFinite(Number(opts.gap)) ? Number(opts.gap) : DEFAULT_GAP,
+    organizer: ensureTrailingEmpty(newRootOrganizer(opts.children || [])),
   };
 }
 
@@ -192,6 +367,10 @@ function normalizeNode(node) {
     return null;
   }
 
+  if (node.type === NODE_WIDGET || (!node.type && node.widget)) {
+    return newWidgetNode(node.widget, node);
+  }
+
   if (node.type === NODE_TEMPLATE || (!node.type && node.template)) {
     if (!node.template) {
       return null;
@@ -236,7 +415,7 @@ function spanFromWidth(width) {
  */
 export function tidyRoot(root) {
   const children = (root.children || []).map((child) => (
-    child.type === NODE_TEMPLATE ? newOrganizer({ children: [child] }) : child
+    isLeaf(child) ? newOrganizer({ children: [child] }) : child
   ));
 
   return ensureTrailingEmpty({
@@ -246,7 +425,7 @@ export function tidyRoot(root) {
 
 /** Force a node to be the panel root. */
 function asRoot(node) {
-  const org = node && node.type !== NODE_TEMPLATE ? normalizeNode(node) : null;
+  const org = node && !isLeaf(node) ? normalizeNode(node) : null;
 
   if (org) {
     return tidyRoot(org);
@@ -260,17 +439,27 @@ function asRoot(node) {
 
 function normalizePanel(panel) {
   // A stock panel carries no organizer — there is nothing to lay out.
-  if (isStockPanel(panel)) {
-    return {
-      id: panel?.id || uid('panel'), name: panel?.name || 'Home', kind: PANEL_STOCK
-    };
-  }
-
-  return {
+  const out = isStockPanel(panel) ? {
+    id: panel?.id || uid('panel'), name: panel?.name || 'Home', kind: PANEL_STOCK
+  } : {
     id:        panel?.id || uid('panel'),
-    name:      panel?.name || 'Panel',
+    name:      panel?.name || 'Untitled view',
+    gap:       Number.isFinite(Number(panel?.gap)) ? Number(panel.gap) : DEFAULT_GAP,
     organizer: asRoot(panel?.organizer),
   };
+
+  // Published organization templates are marked so the UI can show (and protect) them.
+  if (panel?.org) {
+    out.org = true;
+  }
+
+  // Which published view this one was forked from. It MUST survive a round trip through storage,
+  // or the fork and its source both show up in the bar as two views with the same name.
+  if (panel?.from) {
+    out.from = panel.from;
+  }
+
+  return out;
 }
 
 // ---- legacy migration ----
@@ -318,6 +507,11 @@ export function migrateToView(value) {
     const panels = value.panels.filter((p) => p && typeof p === 'object').map(normalizePanel);
     const out = { panels: panels.length ? panels : [newPanel('Home')] };
 
+    // Which view opens first. Dropped when it names a view that no longer exists.
+    if (value.defaultPanelId && panels.some((p) => p.id === value.defaultPanelId)) {
+      out.defaultPanelId = value.defaultPanelId;
+    }
+
     if (value.disabled) {
       out.disabled = true;
     }
@@ -364,7 +558,7 @@ export function migrateToView(value) {
 function mapTree(node, fn) {
   const mapped = fn(node);
 
-  if (!mapped || mapped.type === NODE_TEMPLATE) {
+  if (!mapped || isLeaf(mapped)) {
     return mapped;
   }
 
@@ -448,7 +642,7 @@ export function insertNode(root, parentId, child, index) {
   const target = parentId || root.id;
 
   return mapTree(root, (node) => {
-    if (node.id !== target || node.type === NODE_TEMPLATE) {
+    if (node.id !== target || isLeaf(node)) {
       return node;
     }
 
@@ -473,7 +667,7 @@ export function removeNode(root, id) {
   }
 
   return mapTree(root, (node) => {
-    if (node.type === NODE_TEMPLATE) {
+    if (isLeaf(node)) {
       return node;
     }
 
@@ -555,6 +749,9 @@ export function templatesInTree(root) {
     if (node.type === NODE_TEMPLATE) {
       out.push(node.template);
 
+      return;
+    }
+    if (node.type === NODE_WIDGET) {
       return;
     }
     (node.children || []).forEach(walk);

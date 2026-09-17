@@ -2,31 +2,36 @@
 import StockHome from '@shell/pages/home.vue';
 import OrganizerNode from '../components/OrganizerNode.vue';
 import HomeTemplateEditor from '../components/HomeTemplateEditor.vue';
+import HomeViewBar from '../components/HomeViewBar.vue';
+import EditViewSidebar from '../components/EditViewSidebar.vue';
+import WidgetSettingsModal from '../components/WidgetSettingsModal.vue';
+import { isTemplatingEnabled, appliedViewScopes, saveView, fetchTemplatingConfigMaps } from '../templating/template-engine';
 import {
-  isTemplatingEnabled, appliedViewScopes, saveView, savedHomeTemplates, fetchTemplatingConfigMaps
-} from '../templating/template-engine';
-import {
-  NODE_TEMPLATE, GRID_COLUMNS, emptyView, newPanel, newStockPanel, isStockPanel, newOrganizer, newTemplateNode,
-  findNode, findParent, addChild, removeNode, moveNode, moveNodeTo, updateNode, setColSpan, tidyRoot,
-  pathToNode
+  DEFAULT_GAP, GRID_COLUMNS, isLeaf, newId, newPanel, newWidgetNode, isStockPanel,
+  findNode, addChild, insertNode, removeNode, moveNode, moveNodeTo, updateNode,
+  setColSpan, tidyRoot, heightForPreset, newRootOrganizer, ensureTrailingEmpty, SPACING_PRESETS
 } from '../templating/view-model';
 
-// The Home VIEW.
+// The Home.
 //
-//   VIEW      this page. Holds one or more PANELS (they render as TABS when there's more than one).
-//   PANEL     one screen, always filled by a ROOT ORGANIZER (100% x 100%).
-//   ORGANIZER a full-width row on a 12-column grid. There is only one kind; organizers stack and
-//             may nest (a nested one always takes the whole row).
-//   TEMPLATE  a leaf rendering one stored template ConfigMap, sized by col-span-1 … col-span-12.
+//   VIEW       one named dashboard — "Cluster overview", "Upgrade week". Views are the tabs in the
+//              bar at the top, and each is edited, renamed, duplicated and deleted on its own.
+//   WIDGET     one building block on a view's grid (a table, counters, a bar chart, …), sized in
+//              twelfths and configured in place through its ⚙.
+//   ROW        structure, not something you configure: widgets wrap onto rows, and a row is only
+//              visible while editing as the dashed area you drop into.
 //
-// Outside edit mode it renders SEAMLESSLY (no chrome) so the templates read as one page. "Edit Home"
-// turns on outlines and drag-and-drop: drag templates between organizers, drag organizers up and
-// down, and drag a template's right edge to resize it by columns. The root always keeps one empty
-// organizer at the bottom to drop into. Edits are a DRAFT — nothing is published until Save.
+// WHERE VIEWS LIVE. Your views are saved to YOUR account; the views an admin publishes live in the
+// organization's scope and appear in the same bar. Editing one of those does not change what
+// everyone else sees — it forks the view into your account first, which is what lets the editing
+// bar promise "Changes are saved to your account only" without an asterisk. Publishing is the
+// separate, deliberate step in the ⋮ menu.
+//
+// Edits are a DRAFT: nothing is written until Save.
 export default {
   name:       'AiTemplatingHome',
   components: {
-    StockHome, OrganizerNode, HomeTemplateEditor
+    StockHome, OrganizerNode, HomeTemplateEditor, HomeViewBar, EditViewSidebar, WidgetSettingsModal
   },
 
   // Action callbacks for the recursive OrganizerNode tree (so it never has to re-emit at each
@@ -34,9 +39,12 @@ export default {
   provide() {
     return {
       viewEditor: {
-        select:       (id) => this.selectNode(id),
-        move:         (id, delta) => this.moveNode(id, delta),
-        remove:       (id) => this.removeNode(id),
+        select:    (id) => this.selectNode(id),
+        move:      (id, delta) => this.moveNode(id, delta),
+        remove:    (id) => this.removeNode(id),
+        configure: (id) => {
+          this.settingsNodeId = id;
+        },
         editTemplate: (name) => this.openTemplateEditor(name),
         beginDrag:    (id) => {
           this.ui.dragId = id;
@@ -60,22 +68,28 @@ export default {
       userId:                 null,
       loaded:                 false,
       editing:                false,
-      scope:                  'global', // which scope the editor is writing to
-      working:                null, // working-copy VIEW while editing (a DRAFT — not published)
-      snapshot:               null, // JSON of the view when editing began (for Reset)
-      savedBaseline:          null, // JSON of the last PUBLISHED state (for the dirty check)
+      working:                null, // working copy of YOUR views while editing (a DRAFT)
+      snapshot:               null, // JSON of the draft when editing began (for Cancel)
+      savedBaseline:          null, // JSON of the last SAVED state (for the dirty check)
       activePanelId:          null,
-      selectedNodeId:         null, // node the editor's controls act on
-      editingTemplate:        null, // template name whose CONTENT is open in the split editor
-      editingTemplateNewKind: null, // 'code' | 'json' when the open editor is a BRAND NEW template
-      editingTemplateNewName: '', // display name for a brand new template
+      // True once the active view is a DELIBERATE choice (you clicked it, or an action moved you to
+      // it) rather than the fallback taken while the config was still loading.
+      pinnedView:             false,
+      selectedNodeId:         null,
+      newPanelId:             null, // the view being created, while it has never been saved
+      startedFrom:            '', // what a new view was started from, for the bar's "From …"
+      settingsNodeId:         null, // widget whose settings dialog is open
+      lizPreviewId:           null, // Liz's preview widget, on the grid but not yet part of the view
+      editingTemplate:        null, // stored template whose CONTENT is open in the split editor
+      editingTemplateNewKind: null,
+      editingTemplateNewName: '',
       saving:                 false,
-      status:                 '',
       error:                  '',
-      // Shared, reactive editor UI state: what's being dragged, and the innermost node under the
-      // pointer (so exactly one node shows its toolbar).
-      ui:                     { dragId: null, hoverId: null },
-      gridColumns:            GRID_COLUMNS,
+      // Shared, reactive editor UI state: what is being dragged (an existing node, or a catalog
+      // entry on its way in), and the innermost node under the pointer.
+      ui:                     {
+        dragId: null, hoverId: null, dragEntry: null, dragLabel: '', showBoxModel: false
+      },
     };
   },
 
@@ -88,7 +102,7 @@ export default {
 
         this.userId = user?.id || this.$store.getters['auth/user']?.id || null;
 
-        if (this.appliedView || savedHomeTemplates(this.$store.getters).length || attempt >= 4) {
+        if (this.scopes.user || this.scopes.global || attempt >= 4) {
           break;
         }
       } catch (e) { /* retry */ }
@@ -109,93 +123,98 @@ export default {
       return appliedViewScopes(this.$store.getters, this.userId);
     },
 
-    // What the user sees when NOT editing (their personal Home overrides the global default).
-    appliedView() {
-      return this.templatingEnabled ? this.scopes.resolved : null;
+    // Your saved views (what the editor writes).
+    myViews() {
+      return this.scopes.user?.panels || [];
     },
 
-    // The view currently on screen — the live working copy while editing, else the applied one.
-    view() {
-      return this.editing ? this.working : this.appliedView;
+    // The views an admin published for the organization.
+    orgViews() {
+      return this.scopes.global?.panels || [];
     },
 
-    panels() {
-      return this.view?.panels || [];
+    // What a brand-new view is seeded from: the organization template. A stock view is skipped —
+    // it has no grid, so starting from it would give you nothing to edit.
+    orgTemplate() {
+      return this.orgViews.find((p) => !isStockPanel(p)) || null;
     },
 
-    activePanel() {
-      return this.panels.find((p) => p.id === this.activePanelId) || this.panels[0] || null;
+    // Every view in the bar: the organization's, then your own.
+    //
+    // A view you have forked takes its source's PLACE rather than being appended — the bar has to
+    // stay still. Editing "Cluster overview" must not make it jump to the end of the strip.
+    views() {
+      const mine = this.editing ? (this.working?.panels || []) : this.myViews;
+      const forks = new Map(mine.filter((p) => p.from).map((p) => [p.from, p]));
+      const orgIds = new Set(this.orgViews.map((p) => p.id));
+
+      const published = this.orgViews.map((p) => forks.get(p.id) || { ...p, org: true });
+      const own = mine.filter((p) => !p.from || !orgIds.has(p.from));
+
+      return [...published, ...own];
     },
 
-    // A STOCK panel renders Rancher's own Home and has no layout, so there is no organizer tree
-    // and nothing for the editor's controls to act on.
+    activeView() {
+      return this.views.find((p) => p.id === this.activePanelId) || this.views[0] || null;
+    },
+
+    defaultViewId() {
+      return this.scopes.user?.defaultPanelId || '';
+    },
+
+    isNewView() {
+      return !!this.newPanelId && this.newPanelId === this.activePanelId;
+    },
+
+    // A STOCK view renders Rancher's own Home and has no layout to edit.
     activeIsStock() {
-      return isStockPanel(this.activePanel);
+      return isStockPanel(this.activeView);
     },
 
     rootOrganizer() {
-      return this.activePanel?.organizer || null;
+      return this.activeView?.organizer || null;
     },
 
-    // More than one PANEL means tabs; while editing we always show the panel manager.
-    showTabs() {
-      return this.editing || this.panels.length > 1;
+    gap() {
+      return this.activeView?.gap ?? DEFAULT_GAP;
     },
 
     hasContent() {
-      return this.activeIsStock || !!this.rootOrganizer?.children?.length;
+      return this.activeIsStock || !!this.rootOrganizer?.children?.some((child) => child.children?.length || isLeaf(child));
     },
 
-    // True when the working draft differs from the last-published state for this scope.
+    // True when the draft differs from the last saved state.
     dirty() {
       return this.editing && this.savedBaseline !== null && JSON.stringify(this.working) !== this.savedBaseline;
     },
 
-    // Whether the scope being edited is currently disabled (kept, but not applied).
-    scopeDisabled() {
-      return !!this.working?.disabled;
-    },
-
-    templateOptions() {
-      return savedHomeTemplates(this.$store.getters).map((cr) => ({
-        name:        cr.metadata?.name,
-        displayName: cr.spec?.displayName || cr.metadata?.name,
-      }));
-    },
-
-    // The node the properties strip edits.
+    // The node the Layout tab acts on — never a row, which has nothing to lay out.
     selectedNode() {
-      return this.rootOrganizer ? findNode(this.rootOrganizer, this.selectedNodeId) : null;
+      const node = this.rootOrganizer ? findNode(this.rootOrganizer, this.selectedNodeId) : null;
+
+      return node && isLeaf(node) ? node : null;
     },
 
-    selectedIsRoot() {
-      return !!this.selectedNode && this.selectedNode.id === this.rootOrganizer?.id;
+    settingsNode() {
+      return this.rootOrganizer && this.settingsNodeId ? findNode(this.rootOrganizer, this.settingsNodeId) : null;
     },
 
-    selectedIsOrganizer() {
-      return !!this.selectedNode && this.selectedNode.type !== NODE_TEMPLATE;
+    // Liz needs the AI agent CRD to be installed before offering to build anything.
+    lizEnabled() {
+      return !!this.$store.getters['management/schemaFor']('ai.cattle.io.aiagentconfig');
     },
 
-    // Root -> … -> selected node. Rendered as a clickable breadcrumb because a parent organizer (the
-    // panel root above all) is completely covered by its children and can't be clicked directly.
-    breadcrumb() {
-      if (!this.rootOrganizer) {
-        return [];
-      }
-
-      const path = pathToNode(this.rootOrganizer, this.selectedNodeId);
-      const chain = path.length ? path : [this.rootOrganizer];
-
-      return chain.map((node, i) => ({
-        id:    node.id,
-        label: node.type === NODE_TEMPLATE ? node.template : (i === 0 ? 'Panel' : 'Organizer'),
-      }));
+    // The starting points a brand-new view offers: empty, or a copy of any view you already have.
+    startingPoints() {
+      return this.views
+        .filter((p) => p.id !== this.newPanelId && !isStockPanel(p))
+        .map((p) => ({ id: p.id, label: `Copy ${ p.name }` }));
     },
   },
 
   watch: {
-    // If the applied view changes underneath us (or on first load), keep a valid active panel.
-    appliedView() {
+    // If what is applied changes underneath us (or on first load), keep a valid active view.
+    scopes() {
       if (!this.editing) {
         this.syncActivePanel();
       }
@@ -207,82 +226,152 @@ export default {
       return JSON.parse(JSON.stringify(obj));
     },
 
+    /**
+     * Open on your default view, or the first one there is.
+     *
+     * The config arrives in pieces — the organization's views resolve before your own — so the
+     * first pass can only fall back to the first view there is. That fallback is NOT a choice, and
+     * this runs again when the rest lands: your default still wins. A view you actually picked
+     * (`pinnedView`) is never moved underneath you.
+     */
     syncActivePanel() {
-      if (!this.panels.find((p) => p.id === this.activePanelId)) {
-        this.activePanelId = this.panels[0]?.id || null;
-      }
-    },
-
-    // ---- edit lifecycle ----
-    toggleEditor() {
-      if (this.editing) {
-        this.exitEdit();
-      } else {
-        this.enterEdit();
-      }
-    },
-
-    enterEdit() {
-      this.status = '';
-      this.error = '';
-      this.scope = 'global';
-      this.editingTemplate = null;
-      this.seedWorking();
-      this.editing = true;
-    },
-
-    // Layout edits are a DRAFT — leaving with unsaved changes discards them (after a confirm).
-    async exitEdit() {
-      if (this.dirty && !window.confirm('You have unsaved changes to this Home layout. Discard them?')) {
+      if (this.pinnedView && this.views.find((p) => p.id === this.activePanelId)) {
         return;
       }
+
+      const preferred = this.views.find((p) => p.id === this.defaultViewId);
+
+      if (preferred) {
+        this.activePanelId = preferred.id;
+        this.selectedNodeId = null;
+
+        return;
+      }
+
+      if (!this.views.find((p) => p.id === this.activePanelId)) {
+        this.activePanelId = this.views[0]?.id || null;
+        this.selectedNodeId = null;
+      }
+    },
+
+    // Move to a view on purpose — and remember that it was on purpose.
+    setActiveView(id) {
+      this.activePanelId = id;
+      this.pinnedView = true;
+      this.selectedNodeId = null;
+    },
+
+    selectPanel(id) {
+      this.setActiveView(id);
+    },
+
+    // ---- edit lifecycle ----------------------------------------------------------------------
+
+    // The draft is always YOUR views. Editing a published view forks it into your account first, so
+    // an edit can never change what the organization sees by accident.
+    enterEdit() {
+      this.error = '';
+      this.working = this.scopes.user ? this.clone(this.scopes.user) : { panels: [] };
+
+      const active = this.activeView;
+
+      if (active?.org) {
+        const fork = {
+          ...this.clone(active), id: newId('panel'), org: undefined, from: active.id
+        };
+
+        delete fork.org;
+        this.working.panels.push(fork);
+        this.setActiveView(fork.id);
+      } else if (!this.working.panels.length) {
+        const first = newPanel('My Home');
+
+        this.working.panels.push(first);
+        this.setActiveView(first.id);
+      }
+
+      this.snapshot = JSON.stringify(this.working);
+      this.savedBaseline = this.snapshot;
+      this.editing = true;
+      this.selectedNodeId = null;
+    },
+
+    cancelEdit() {
+      if (this.dirty && !window.confirm('Discard the changes to this view?')) {
+        return;
+      }
+      this.leaveEdit();
+    },
+
+    async leaveEdit() {
       this.editing = false;
       this.working = null;
       this.snapshot = null;
       this.savedBaseline = null;
-      this.editingTemplate = null;
+      this.newPanelId = null;
+      this.startedFrom = '';
       this.selectedNodeId = null;
+      this.settingsNodeId = null;
+      this.lizPreviewId = null;
       await fetchTemplatingConfigMaps(this.$store).catch(() => {});
       this.syncActivePanel();
     },
 
-    // Load the chosen scope's published view into the working DRAFT (or an empty one).
-    seedWorking() {
-      const existing = this.scope === 'user' ? this.scopes.user : this.scopes.global;
-      const view = existing ? this.clone(existing) : emptyView();
-      const json = JSON.stringify(view);
+    /**
+     * A fork that still matches the published view it came from is not a decision you made — it is
+     * just where the editor had to put the draft. Saving it would leave a duplicate in the bar
+     * forever, so those are dropped on the way out.
+     */
+    pruneUntouchedForks() {
+      const strip = (panel) => {
+        const copy = { ...panel };
 
-      this.working = view;
-      this.snapshot = json;
-      this.savedBaseline = json;
-      this.activePanelId = view.panels[0]?.id || null;
-      this.selectedNodeId = view.panels[0]?.organizer?.id || null;
+        delete copy.id;
+        delete copy.from;
+        delete copy.org;
+
+        return JSON.stringify(copy);
+      };
+      const sources = new Map(this.orgViews.map((p) => [p.id, strip(p)]));
+      const dropped = new Set();
+
+      this.working.panels = this.working.panels.filter((panel) => {
+        const untouched = panel.from && sources.get(panel.from) === strip(panel);
+
+        if (untouched) {
+          dropped.add(panel.id);
+        }
+
+        return !untouched;
+      });
+
+      // Looking at one that just went? Fall back to the published view it mirrored.
+      if (dropped.has(this.activePanelId)) {
+        this.activePanelId = null;
+        this.pinnedView = false;
+      }
+      if (this.working.defaultPanelId && dropped.has(this.working.defaultPanelId)) {
+        delete this.working.defaultPanelId;
+      }
     },
 
-    setScope(scope) {
-      if (scope === this.scope) {
-        return;
-      }
-      if (this.dirty && !window.confirm('Discard unsaved changes to switch scope?')) {
-        return;
-      }
-      this.scope = scope;
-      this.status = '';
-      this.error = '';
-      this.seedWorking();
-    },
-
-    // Publish the working draft to the current scope. Global → everyone; Your Home → just you.
-    async save() {
+    // Publish the draft to your account.
+    async save({ keepEditing = false } = {}) {
       this.saving = true;
       this.error = '';
-      this.status = '';
 
       try {
-        await saveView(this.$store, this.scope, this.working, this.userId);
+        this.discardLizPreview();
+        this.pruneUntouchedForks();
+        await saveView(this.$store, 'user', this.working, this.userId);
         this.savedBaseline = JSON.stringify(this.working);
+        this.newPanelId = null;
+        this.startedFrom = '';
         await fetchTemplatingConfigMaps(this.$store).catch(() => {});
-        this.status = this.scope === 'user' ? 'Saved to your Home.' : 'Saved — live for everyone.';
+
+        if (!keepEditing) {
+          await this.leaveEdit();
+        }
       } catch (e) {
         this.error = e?.message || String(e);
       } finally {
@@ -290,17 +379,267 @@ export default {
       }
     },
 
-    // ---- tree mutations (draft only — mutate the working copy, publish on Save) ----
+    // Keep the view you started from as it was, and save your changes as a view of their own.
+    async saveAsNewView() {
+      const panel = this.workingPanel();
+
+      if (!panel) {
+        return;
+      }
+
+      const copy = {
+        ...this.clone(panel), id: newId('panel'), name: `${ panel.name } copy`
+      };
+
+      delete copy.from;
+
+      // The original goes back to how it was saved; the copy carries the edits.
+      const baseline = JSON.parse(this.savedBaseline);
+      const original = baseline.panels.find((p) => p.id === panel.id);
+
+      if (original) {
+        Object.assign(panel, this.clone(original));
+      } else {
+        this.working.panels = this.working.panels.filter((p) => p.id !== panel.id);
+      }
+
+      this.working.panels.push(copy);
+      this.setActiveView(copy.id);
+
+      await this.save();
+    },
+
+    // ---- view (tab) actions ------------------------------------------------------------------
+
     workingPanel() {
       return this.working?.panels.find((p) => p.id === this.activePanelId) || null;
     },
 
-    // Every tree change re-runs tidyRoot: loose templates get wrapped in their own organizer and the
-    // root always ends with exactly one empty organizer to drop into.
-    mutateTree(fn) {
+    renameView(name) {
       const panel = this.workingPanel();
 
       if (panel) {
+        panel.name = name;
+      }
+    },
+
+    // "Rename" from the ⋮ menu: there is one place a view is named — the bar — so this opens the
+    // editor and puts the cursor in it rather than inventing a second naming dialog.
+    startRename() {
+      if (!this.editing) {
+        this.enterEdit();
+      }
+      this.$nextTick(() => this.$refs.bar?.$el?.querySelector('.vbar__name')?.select());
+    },
+
+    // A new view starts from the organization template when there is one — the design's "From the
+    // organization template. Not saved yet."
+    newView() {
+      if (!this.editing) {
+        this.enterEdit();
+      }
+
+      const template = this.orgTemplate;
+      const panel = template ? {
+        ...this.clone(template), id: newId('panel'), name: 'Untitled view', org: undefined, from: undefined
+      } : newPanel('Untitled view');
+
+      delete panel.org;
+      delete panel.from;
+
+      this.working.panels.push(panel);
+      this.setActiveView(panel.id);
+      this.newPanelId = panel.id;
+      this.startedFrom = template ? 'the organization template' : '';
+      this.selectedNodeId = null;
+    },
+
+    // The starting-point chips on a brand-new view: swap what it was seeded with.
+    startFrom(sourceId) {
+      const panel = this.workingPanel();
+
+      if (!panel) {
+        return;
+      }
+
+      const source = sourceId ? this.views.find((p) => p.id === sourceId) : null;
+
+      panel.organizer = source ? this.clone(source.organizer) : ensureTrailingEmpty(newRootOrganizer());
+      panel.gap = source?.gap ?? DEFAULT_GAP;
+      this.startedFrom = source ? source.name : '';
+      this.selectedNodeId = null;
+    },
+
+    async duplicateView() {
+      const source = this.activeView;
+
+      if (!source) {
+        return;
+      }
+
+      const draft = this.scopes.user ? this.clone(this.scopes.user) : { panels: [] };
+      const copy = {
+        ...this.clone(source), id: newId('panel'), name: `${ source.name } copy`
+      };
+
+      delete copy.org;
+      delete copy.from;
+      draft.panels.push(copy);
+
+      await this.persist(draft, copy.id);
+    },
+
+    // Your default is the view the Home opens on. Setting it on a published view forks that view
+    // into your account first, for the same reason editing does.
+    async setDefaultView() {
+      const active = this.activeView;
+
+      if (!active) {
+        return;
+      }
+
+      const draft = this.scopes.user ? this.clone(this.scopes.user) : { panels: [] };
+      let id = active.id;
+
+      if (active.org) {
+        const fork = {
+          ...this.clone(active), id: newId('panel'), from: active.id
+        };
+
+        delete fork.org;
+        draft.panels.push(fork);
+        id = fork.id;
+      }
+
+      draft.defaultPanelId = id;
+      await this.persist(draft, id);
+    },
+
+    // Publish the view to everyone. It joins the organization's scope, which is the only thing on
+    // this page that is not personal — so it asks first.
+    async publishView() {
+      const source = this.editing ? this.workingPanel() : this.activeView;
+
+      if (!source || !window.confirm(`Publish “${ source.name }” as an organization template? Everyone will see it in their Home.`)) {
+        return;
+      }
+
+      const org = this.scopes.global ? this.clone(this.scopes.global) : { panels: [] };
+      const published = { ...this.clone(source), id: source.from || source.id };
+
+      delete published.org;
+      delete published.from;
+
+      const at = org.panels.findIndex((p) => p.id === published.id || p.name === published.name);
+
+      if (at >= 0) {
+        org.panels.splice(at, 1, published);
+      } else {
+        org.panels.push(published);
+      }
+
+      this.saving = true;
+      this.error = '';
+
+      try {
+        await saveView(this.$store, 'global', org, this.userId);
+        await this.linkToPublished(source, published.id);
+        await fetchTemplatingConfigMaps(this.$store).catch(() => {});
+      } catch (e) {
+        this.error = e?.message || String(e);
+      } finally {
+        this.saving = false;
+      }
+    },
+
+    /**
+     * After publishing, YOUR copy becomes a fork of the view you just published.
+     *
+     * Without this the bar would show the same view twice — once as yours, once as the
+     * organization's — which is not two views, it is one view and its shadow.
+     */
+    async linkToPublished(source, publishedId) {
+      if (source.org || source.from === publishedId) {
+        return;
+      }
+
+      if (this.editing) {
+        const panel = this.workingPanel();
+
+        if (panel) {
+          panel.from = publishedId;
+        }
+
+        return;
+      }
+
+      const draft = this.scopes.user ? this.clone(this.scopes.user) : null;
+      const mine = draft?.panels.find((p) => p.id === source.id);
+
+      if (mine) {
+        mine.from = publishedId;
+        await saveView(this.$store, 'user', draft, this.userId);
+      }
+    },
+
+    async deleteView() {
+      const active = this.activeView;
+
+      if (!active || !window.confirm(`Delete the view “${ active.name }”?`)) {
+        return;
+      }
+
+      // A published view is not yours to delete — hiding it means keeping an empty fork of it.
+      if (active.org) {
+        this.error = 'That view is published for the organization. An administrator has to remove it.';
+
+        return;
+      }
+
+      if (this.editing) {
+        this.working.panels = this.working.panels.filter((p) => p.id !== active.id);
+        this.activePanelId = null;
+        this.pinnedView = false;
+        await this.save();
+
+        return;
+      }
+
+      const draft = this.clone(this.scopes.user);
+
+      draft.panels = draft.panels.filter((p) => p.id !== active.id);
+      await this.persist(draft, null);
+    },
+
+    // Write a whole user-scope draft straight through (the view-mode actions, which have no draft).
+    async persist(draft, activeId) {
+      this.saving = true;
+      this.error = '';
+
+      try {
+        await saveView(this.$store, 'user', draft, this.userId);
+        await fetchTemplatingConfigMaps(this.$store).catch(() => {});
+        this.activePanelId = activeId || null;
+        this.pinnedView = !!activeId;
+        this.syncActivePanel();
+      } catch (e) {
+        this.error = e?.message || String(e);
+      } finally {
+        this.saving = false;
+      }
+    },
+
+    // ---- grid mutations (draft only) ----------------------------------------------------------
+
+    // Every tree change re-runs tidyRoot: loose widgets get wrapped in their own row and the view
+    // always ends with exactly one empty row to drop into.
+    //
+    // A STOCK view has no tree at all — it is Rancher's own Home rendered as a view — so every edit
+    // here is a no-op rather than a crash. The drawer says as much (see `activeIsStock`).
+    mutateTree(fn) {
+      const panel = this.workingPanel();
+
+      if (panel && panel.organizer) {
         panel.organizer = tidyRoot(fn(panel.organizer));
       }
     },
@@ -309,92 +648,118 @@ export default {
       this.selectedNodeId = id;
     },
 
-    // New children go into the selected ORGANIZER — or, if a template leaf is selected, into its
-    // parent, so "add" always lands somewhere sensible.
-    addTargetId() {
+    // Where a widget lands when it is CLICKED in the catalog rather than dragged.
+    //
+    // It fills the LAST ROW while there is room for it, and only starts a new one when there is
+    // not. Clicking Cluster health, Active alerts and Upgrade status in turn therefore builds the
+    // row of three you were picturing, instead of three rows of one.
+    addTargetId(span = 12) {
       const root = this.rootOrganizer;
 
       if (!root) {
         return null;
       }
-      if (!this.selectedNode) {
-        return root.id;
-      }
-      if (this.selectedIsOrganizer) {
-        return this.selectedNode.id;
-      }
 
-      return findParent(root, this.selectedNode.id)?.id || root.id;
-    },
+      const rows = (root.children || []).filter((child) => !isLeaf(child));
+      const filled = rows.filter((row) => (row.children || []).length);
+      const last = filled[filled.length - 1];
 
-    addTemplate(name) {
-      if (!name) {
-        return;
-      }
+      if (last) {
+        const used = (last.children || []).reduce((total, child) => total + (child.colSpan || 0), 0);
 
-      const node = newTemplateNode(name);
-      let target = this.addTargetId();
-
-      // Templates live INSIDE an organizer, never loose on the panel root — so when the root is the
-      // target, drop into its trailing empty organizer (the one always kept for exactly this).
-      if (target === this.rootOrganizer?.id) {
-        const kids = this.rootOrganizer.children || [];
-        const last = kids[kids.length - 1];
-
-        if (last && last.type !== NODE_TEMPLATE) {
-          target = last.id;
+        if (used + span <= GRID_COLUMNS) {
+          return last.id;
         }
       }
 
-      this.mutateTree((root) => addChild(root, target, node));
+      // No room (or nothing placed yet): the trailing empty row, which tidyRoot always keeps.
+      const trailing = rows[rows.length - 1];
+
+      return trailing && !(trailing.children || []).length ? trailing.id : root.id;
+    },
+
+    addFromCatalog(entry, at) {
+      if (!entry) {
+        return;
+      }
+
+      const node = newWidgetNode(entry.spec, { colSpan: entry.span });
+
+      if (at) {
+        this.mutateTree((root) => insertNode(root, at.parentId, node, at.index));
+      } else {
+        this.mutateTree((root) => addChild(root, this.addTargetId(node.colSpan), node));
+      }
+
       this.selectedNodeId = node.id;
     },
 
-    addOrganizer() {
-      const node = newOrganizer();
-      const target = this.addTargetId();
+    // ---- drag & drop --------------------------------------------------------------------------
 
-      this.mutateTree((root) => addChild(root, target, node));
-      this.selectedNodeId = node.id;
+    // A drag from the catalog carries the entry itself; a drag on the grid carries a node id.
+    onCatalogDragStart(entry, ev) {
+      this.ui.dragEntry = entry;
+      this.ui.dragLabel = entry.name;
+
+      if (ev?.dataTransfer) {
+        ev.dataTransfer.effectAllowed = 'copy';
+        ev.dataTransfer.setData('text/plain', entry.id);
+      }
     },
 
-    // ---- drag & drop ----
+    onCatalogDragEnd() {
+      this.ui.dragEntry = null;
+      this.ui.dragLabel = '';
+    },
+
     dropInto(parentId, index) {
+      const entry = this.ui.dragEntry;
       const id = this.ui.dragId;
 
       this.ui.dragId = null;
+      this.ui.dragEntry = null;
+      this.ui.dragLabel = '';
+
+      if (entry) {
+        this.addFromCatalog(entry, { parentId, index });
+
+        return;
+      }
 
       if (!id) {
         return;
       }
+
       this.mutateTree((root) => moveNodeTo(root, id, parentId, index));
       this.selectedNodeId = id;
     },
+
+    // ---- layout of the selected widget --------------------------------------------------------
 
     setColSpan(id, span) {
       this.mutateTree((root) => setColSpan(root, id, span));
     },
 
-    removeNode(id) {
-      this.mutateTree((root) => removeNode(root, id));
-      if (this.selectedNodeId === id) {
-        this.selectedNodeId = this.rootOrganizer?.id || null;
+    setSelectedWidth(span) {
+      if (this.selectedNodeId) {
+        this.setColSpan(this.selectedNodeId, span);
       }
     },
 
-    moveNode(id, delta) {
-      this.mutateTree((root) => moveNode(root, id, delta));
+    setSelectedHeight(presetId) {
+      this.setNodeProp('height', heightForPreset(presetId, this.gap));
     },
 
-    // A size/padding input accepts a bare number (px) or any CSS length ('100%', '2rem').
-    parseSizeInput(value) {
-      const v = `${ value ?? '' }`.trim();
+    setSelectedSpacing(presetId) {
+      const preset = SPACING_PRESETS.find((p) => p.id === presetId);
 
-      if (!v) {
-        return 0;
+      if (!preset) {
+        return;
       }
 
-      return /^\d+(\.\d+)?$/.test(v) ? Number(v) : v;
+      this.setNodeProp('padding', {
+        top: preset.padding, right: preset.padding, bottom: preset.padding, left: preset.padding
+      });
     },
 
     setNodeProp(key, value) {
@@ -406,81 +771,104 @@ export default {
       this.mutateTree((root) => updateNode(root, id, (node) => ({ ...node, [key]: value })));
     },
 
-    setNodeSize(key, value) {
-      this.setNodeProp(key, this.parseSizeInput(value));
-    },
-
-    // `box` is 'margin' or 'padding' — both are four-sided values edited the same way.
+    // `box` is 'margin' or 'padding' — both are four-sided values edited the same way, in pixels.
     setNodeBox(box, side, value) {
       const id = this.selectedNodeId;
 
       if (!id) {
         return;
       }
-      const parsed = this.parseSizeInput(value);
 
-      this.mutateTree((root) => updateNode(root, id, (node) => ({ ...node, [box]: { ...node[box], [side]: parsed } })));
+      const px = Math.max(0, Math.round(Number(value) || 0));
+
+      this.mutateTree((root) => updateNode(root, id, (node) => ({ ...node, [box]: { ...node[box], [side]: px } })));
     },
 
-    // ---- panel (tab) management ----
-    selectPanel(id) {
-      this.activePanelId = id;
-      this.selectedNodeId = this.panels.find((p) => p.id === id)?.organizer?.id || null;
-    },
+    setGap(value) {
+      const panel = this.workingPanel();
 
-    // `kind` is 'layout' (a root organizer of templates) or 'stock' (Rancher's own Home as a tab).
-    addPanel(kind) {
-      const layout = kind !== 'stock';
-      const panel = layout ? newPanel(`Panel ${ this.working.panels.length + 1 }`) : newStockPanel('Home');
-
-      this.working.panels.push(panel);
-      this.activePanelId = panel.id;
-      this.selectedNodeId = panel.organizer?.id || null;
-    },
-
-    renamePanel(panel) {
-      const name = (window.prompt('Panel name:', panel.name) || '').trim();
-
-      if (name) {
-        panel.name = name;
+      if (panel) {
+        panel.gap = Math.max(0, Math.min(64, Math.round(Number(value) || 0)));
       }
     },
 
-    removePanel(id) {
-      if (this.working.panels.length <= 1) {
+    removeNode(id) {
+      this.mutateTree((root) => removeNode(root, id));
+      if (this.selectedNodeId === id) {
+        this.selectedNodeId = null;
+      }
+      if (this.settingsNodeId === id) {
+        this.settingsNodeId = null;
+      }
+      if (this.lizPreviewId === id) {
+        this.lizPreviewId = null;
+      }
+    },
+
+    moveNode(id, delta) {
+      this.mutateTree((root) => moveNode(root, id, delta));
+    },
+
+    // ---- widget settings ----------------------------------------------------------------------
+
+    applySettings(spec) {
+      const id = this.settingsNodeId;
+
+      this.settingsNodeId = null;
+
+      if (!id) {
         return;
       }
-      this.working.panels = this.working.panels.filter((p) => p.id !== id);
-      if (this.activePanelId === id) {
-        this.selectPanel(this.working.panels[0]?.id);
+
+      this.mutateTree((root) => updateNode(root, id, (node) => ({ ...node, widget: spec })));
+    },
+
+    removeConfigured() {
+      const id = this.settingsNodeId;
+
+      this.settingsNodeId = null;
+      if (id) {
+        this.removeNode(id);
       }
     },
 
-    // ---- template CONTENT editor ----
+    // ---- Liz ----------------------------------------------------------------------------------
+
+    // Liz's widget is put on the grid as a PREVIEW: a real widget with real data, marked so it is
+    // obviously not part of the view yet. "Add to view" just drops the mark.
+    onLizPreview({ widget, span, state }) {
+      this.discardLizPreview();
+
+      if (state === 'preview' && widget) {
+        const node = newWidgetNode(widget, { colSpan: span || 6 });
+
+        node.preview = true;
+        this.mutateTree((root) => addChild(root, this.addTargetId(node.colSpan), node));
+        this.lizPreviewId = node.id;
+        this.selectedNodeId = node.id;
+      } else if (state === 'add' && widget) {
+        const node = newWidgetNode(widget, { colSpan: span || 6 });
+
+        this.mutateTree((root) => addChild(root, this.addTargetId(node.colSpan), node));
+        this.selectedNodeId = node.id;
+      }
+    },
+
+    discardLizPreview() {
+      if (this.lizPreviewId) {
+        const id = this.lizPreviewId;
+
+        this.lizPreviewId = null;
+        this.mutateTree((root) => removeNode(root, id));
+      }
+    },
+
+    // ---- stored-template content editor --------------------------------------------------------
+
     openTemplateEditor(name) {
       this.editingTemplateNewKind = null;
       this.editingTemplateNewName = '';
       this.editingTemplate = name;
-    },
-
-    // Create a BRAND NEW template (kind = 'code' | 'json'). Opens the editor blank; nothing is
-    // written until the user clicks Save.
-    newTemplate(kind) {
-      if (!kind) {
-        return;
-      }
-
-      const label = (window.prompt(`Name for the new ${ kind === 'json' ? 'JSON' : 'code' } template:`) || '').trim();
-
-      if (!label) {
-        return;
-      }
-
-      const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'template';
-
-      this.editingTemplateNewKind = kind;
-      this.editingTemplateNewName = label;
-      this.editingTemplate = slug;
     },
 
     async closeTemplateEditor() {
@@ -488,28 +876,6 @@ export default {
       this.editingTemplateNewKind = null;
       this.editingTemplateNewName = '';
       await fetchTemplatingConfigMaps(this.$store).catch(() => {});
-    },
-
-    // ---- reset / disable ----
-    reset() {
-      if (!this.snapshot) {
-        return;
-      }
-      this.working = JSON.parse(this.snapshot);
-      this.syncActivePanel();
-      this.activePanelId = this.working.panels[0]?.id || this.activePanelId;
-      this.selectedNodeId = this.rootOrganizer?.id || null;
-      this.status = 'Reverted to how it was when you started editing.';
-    },
-
-    // Disable / enable this scope's Home WITHOUT deleting it — a disabled view keeps all its panels
-    // but stops being applied (the scope falls back to stock / the global default).
-    toggleDisable() {
-      if (this.working.disabled) {
-        delete this.working.disabled;
-      } else {
-        this.working.disabled = true;
-      }
     },
   },
 };
@@ -520,7 +886,7 @@ export default {
     class="ai-home"
     :class="{ 'ai-home--editing': editing || editingTemplate }"
   >
-    <!-- A template's ✎ opens the single-template content editor (source + AI chat + preview). -->
+    <!-- A stored template's ⚙ opens the single-template content editor (source + AI chat + preview). -->
     <HomeTemplateEditor
       v-if="editingTemplate"
       :name="editingTemplate"
@@ -529,328 +895,105 @@ export default {
       @close="closeTemplateEditor"
     />
 
-    <!-- While editing the page splits: the Home keeps the full width it will really have, and every
-       control lives in the sidebar beside it. -->
+    <!-- While editing the page splits: the view keeps the full width it will really have, and every
+       control lives in the drawer beside it. -->
     <div
       v-else
       class="ai-home__layout"
     >
       <div class="ai-home__main">
-        <!-- Slim bar: just the edit toggle and the panel tabs — navigation, not configuration. -->
-        <div
+        <HomeViewBar
           v-if="loaded && templatingEnabled"
-          class="ai-home__bar"
+          ref="bar"
+          :views="views"
+          :active-id="activePanelId"
+          :editing="editing"
+          :is-new="isNewView"
+          :default-id="defaultViewId"
+          :dirty="dirty"
+          :saving="saving"
+          :started-from="startedFrom"
+          @select="selectPanel"
+          @edit="enterEdit"
+          @cancel="cancelEdit"
+          @save="save()"
+          @save-as-new="saveAsNewView"
+          @rename="renameView"
+          @rename-start="startRename"
+          @new-view="newView"
+          @duplicate="duplicateView"
+          @set-default="setDefaultView"
+          @publish="publishView"
+          @delete="deleteView"
+        />
+
+        <p
+          v-if="error"
+          class="ai-home__error"
         >
-          <button
-            class="btn btn-sm role-secondary"
-            @click="toggleEditor"
-          >
-            {{ editing ? 'Done' : 'Edit Home' }}
-          </button>
+          {{ error }}
+        </p>
 
-          <!-- PANELS render as tabs (and are managed here while editing). -->
-          <div
-            v-if="showTabs"
-            class="ai-home__tabs"
-          >
-            <button
-              v-for="p in panels"
-              :key="p.id"
-              class="ai-home__tab"
-              :class="{ 'ai-home__tab--active': p.id === activePanelId }"
-              :title="editing ? 'Double-click to rename' : null"
-              @click="selectPanel(p.id)"
-              @dblclick="editing && renamePanel(p)"
-            >
-              {{ p.name }}
-              <i
-                v-if="editing && panels.length > 1"
-                class="icon icon-close ai-home__tab-x"
-                @click.stop="removePanel(p.id)"
-              />
-            </button>
-            <select
-              v-if="editing"
-              class="ai-home__tab ai-home__tab--add"
-              title="Add a panel"
-              @change="addPanel($event.target.value); $event.target.value = ''"
-            >
-              <option value="">
-                ＋
-              </option>
-              <option value="layout">
-                Layout panel (templates)
-              </option>
-              <option value="stock">
-                Stock Rancher Home
-              </option>
-            </select>
-          </div>
-
-          <span
-            v-if="editing && dirty"
-            class="ai-home__dirty"
-          >• Unsaved</span>
-        </div>
-
-        <!-- The applied VIEW (or the edit surface). Gate on templatingEnabled so the kill switch
+        <!-- The active VIEW (or the edit surface). Gate on templatingEnabled so the kill switch
            swaps to stock Rancher live. StockHome shows when nothing is applied. -->
         <div
-          v-if="loaded && templatingEnabled && view && (editing || hasContent)"
+          v-if="loaded && templatingEnabled && activeView && (editing || hasContent)"
           class="ai-home__surface"
           @mouseleave="ui.hoverId = null"
         >
-          <!-- A STOCK panel is Rancher's own Home, dropped in as a tab — nothing to edit. -->
+          <!-- A STOCK view is Rancher's own Home, kept as a tab — nothing to edit. -->
           <StockHome v-if="activeIsStock" />
           <OrganizerNode
             v-else-if="rootOrganizer"
-            :key="rootOrganizer.id"
+            :key="`${ activePanelId }-${ rootOrganizer.id }`"
             :node="rootOrganizer"
             :editing="editing"
             :selected-id="selectedNodeId"
+            :gap="gap"
             is-root
           />
         </div>
         <StockHome v-else-if="loaded" />
       </div>
 
-      <!-- ---- EDITOR SIDEBAR ---- -->
-      <aside
+      <EditViewSidebar
         v-if="editing"
-        class="ai-home__sidebar"
-      >
-        <section class="ai-home__sec">
-          <h4 class="ai-home__sec-title">
-            Editing
-          </h4>
-          <div class="ai-home__scope">
-            <button
-              class="btn btn-sm"
-              :class="scope === 'global' ? 'role-primary' : 'role-secondary'"
-              @click="setScope('global')"
-            >
-              Global
-            </button>
-            <button
-              class="btn btn-sm"
-              :class="scope === 'user' ? 'role-primary' : 'role-secondary'"
-              :disabled="!userId"
-              @click="setScope('user')"
-            >
-              Your Home
-            </button>
-          </div>
-          <p class="ai-home__hint">
-            {{ scope === 'user' ? 'Only you see this Home.' : 'Everyone sees this Home.' }}
-          </p>
-        </section>
-
-        <!-- A stock panel has no layout, so none of the add/size controls apply to it. -->
-        <section
-          v-if="activeIsStock"
-          class="ai-home__sec"
-        >
-          <h4 class="ai-home__sec-title">
-            Panel
-          </h4>
-          <p class="ai-home__hint">
-            This panel is Rancher's own Home. There is nothing to lay out or configure.
-          </p>
-        </section>
-
-        <template v-else>
-          <section class="ai-home__sec">
-            <h4 class="ai-home__sec-title">
-              Add
-            </h4>
-            <select
-              class="ai-home__field"
-              :disabled="!templateOptions.length"
-              title="Add a template into the selected organizer"
-              @change="addTemplate($event.target.value); $event.target.value = ''"
-            >
-              <option value="">
-                ＋ Template…
-              </option>
-              <option
-                v-for="t in templateOptions"
-                :key="t.name"
-                :value="t.name"
-              >
-                {{ t.displayName }}
-              </option>
-            </select>
-            <button
-              class="btn btn-sm role-secondary ai-home__wide"
-              title="Add an organizer (a full-width row) into the selected organizer"
-              @click="addOrganizer"
-            >
-              ＋ Organizer
-            </button>
-            <select
-              class="ai-home__field"
-              title="Create a new template (opens a blank editor; saves only when you click Save)"
-              @change="newTemplate($event.target.value); $event.target.value = ''"
-            >
-              <option value="">
-                ＋ New template…
-              </option>
-              <option value="code">
-                Blank Code template
-              </option>
-              <option value="json">
-                Blank JSON template
-              </option>
-            </select>
-          </section>
-
-          <!-- Properties of the selected node. Sizes/spacing take px numbers or CSS values (100%). -->
-          <section
-            v-if="selectedNode"
-            class="ai-home__sec"
-          >
-            <h4 class="ai-home__sec-title">
-              Selected
-            </h4>
-
-            <!-- Ancestor breadcrumb — the only reliable way to reach a parent organizer (and the
-               panel root), since children cover them completely. -->
-            <nav class="ai-home__crumbs">
-              <template
-                v-for="(crumb, i) in breadcrumb"
-                :key="crumb.id"
-              >
-                <span
-                  v-if="i"
-                  class="ai-home__crumb-sep"
-                >›</span>
-                <button
-                  class="ai-home__crumb"
-                  :class="{ 'ai-home__crumb--active': crumb.id === selectedNodeId }"
-                  :title="`Select ${ crumb.label }`"
-                  @click="selectNode(crumb.id)"
-                >
-                  {{ crumb.label }}
-                </button>
-              </template>
-            </nav>
-
-            <div class="ai-home__row">
-              <label class="ai-home__lbl">Width</label>
-              <span
-                v-if="selectedIsOrganizer"
-                class="ai-home__ro"
-              >100% (always)</span>
-              <input
-                v-else
-                class="ai-home__field ai-home__field--sm"
-                type="number"
-                min="1"
-                :max="gridColumns"
-                :value="selectedNode.colSpan"
-                title="How many of the 12 columns this template takes — or drag its right edge"
-                @change="setColSpan(selectedNode.id, $event.target.value)"
-              >
-              <span
-                v-if="!selectedIsOrganizer"
-                class="ai-home__lbl"
-              >/ 12</span>
-            </div>
-
-            <div
-              v-if="!selectedIsRoot"
-              class="ai-home__row"
-            >
-              <label class="ai-home__lbl">Height</label>
-              <input
-                class="ai-home__field ai-home__field--sm"
-                :value="selectedNode.height"
-                title="Height — 'auto' fits the content, a number is px, or use any CSS length"
-                @change="setNodeSize('height', $event.target.value)"
-              >
-            </div>
-
-            <!-- Margin (outside) and padding (inside) — drawn on the canvas in the same colours. -->
-            <label class="ai-home__lbl ai-home__lbl--margin">Margin</label>
-            <div class="ai-home__sides">
-              <input
-                v-for="side in ['top', 'right', 'bottom', 'left']"
-                :key="`m-${ side }`"
-                class="ai-home__field ai-home__field--sm"
-                :value="selectedNode.margin[side]"
-                :title="`Margin ${ side } — a number is px, or use % / any CSS length`"
-                :placeholder="side.charAt(0).toUpperCase()"
-                @change="setNodeBox('margin', side, $event.target.value)"
-              >
-            </div>
-
-            <label class="ai-home__lbl ai-home__lbl--padding">Padding</label>
-            <div class="ai-home__sides">
-              <input
-                v-for="side in ['top', 'right', 'bottom', 'left']"
-                :key="`p-${ side }`"
-                class="ai-home__field ai-home__field--sm"
-                :value="selectedNode.padding[side]"
-                :title="`Padding ${ side } — a number is px, or use % / any CSS length`"
-                :placeholder="side.charAt(0).toUpperCase()"
-                @change="setNodeBox('padding', side, $event.target.value)"
-              >
-            </div>
-            <p class="ai-home__hint">
-              A number is px; <code>%</code> is relative to the row.
-            </p>
-          </section>
-        </template>
-
-        <section class="ai-home__sec ai-home__sec--actions">
-          <button
-            class="btn btn-sm role-primary ai-home__wide"
-            :disabled="saving || !dirty"
-            title="Publish this layout to the selected scope"
-            @click="save"
-          >
-            {{ saving ? 'Saving…' : 'Save' }}
-          </button>
-          <button
-            class="btn btn-sm role-secondary ai-home__wide"
-            :disabled="saving || !dirty"
-            title="Restore the layout as it was when you started editing"
-            @click="reset"
-          >
-            Reset
-          </button>
-          <button
-            class="btn btn-sm role-link ai-home__wide"
-            :disabled="saving"
-            :title="scopeDisabled
-              ? 'Re-apply this Home (keeps its panels)'
-              : 'Stop applying this Home without deleting it — its panels are kept; the scope falls back to stock / the global default'"
-            @click="toggleDisable"
-          >
-            {{ scopeDisabled ? 'Enable this Home' : 'Disable this Home' }}
-          </button>
-
-          <p
-            v-if="scopeDisabled"
-            class="ai-home__disabled"
-          >
-            Disabled — not applied (panels kept)
-          </p>
-          <p
-            v-if="status"
-            class="text-success ai-home__hint"
-          >
-            {{ status }}
-          </p>
-          <p
-            v-if="error"
-            class="text-error ai-home__hint"
-          >
-            {{ error }}
-          </p>
-        </section>
-      </aside>
+        :view="activeView"
+        :selected="selectedNode"
+        :is-default="activePanelId === defaultViewId"
+        :liz-enabled="lizEnabled"
+        :is-stock="activeIsStock"
+        :is-new="isNewView"
+        :started-from="startedFrom"
+        :starting-points="startingPoints"
+        @close="cancelEdit"
+        @add="addFromCatalog"
+        @drag-start="onCatalogDragStart"
+        @drag-end="onCatalogDragEnd"
+        @start-from="startFrom"
+        @set-width="setSelectedWidth"
+        @set-height="setSelectedHeight"
+        @set-spacing="setSelectedSpacing"
+        @set-box="setNodeBox"
+        @set-col-span="setSelectedWidth"
+        @advanced="ui.showBoxModel = $event"
+        @set-gap="setGap"
+        @set-name="renameView"
+        @set-default="setDefaultView"
+        @publish="publishView"
+        @delete="deleteView"
+        @liz-preview="onLizPreview"
+      />
     </div>
+
+    <WidgetSettingsModal
+      v-if="settingsNode && settingsNode.type === 'widget'"
+      :key="settingsNode.id"
+      :widget="settingsNode.widget"
+      @done="applySettings"
+      @cancel="settingsNodeId = null"
+      @remove="removeConfigured"
+    />
   </div>
 </template>
 
@@ -860,8 +1003,8 @@ export default {
     min-height: calc(100vh - var(--header-height, 54px));
   }
 
-  // While editing, the page and the controls sit side by side: the Home keeps a real, full-width
-  // column (so what you see is what it will look like) and every control lives in the sidebar.
+  // While editing, the page and the controls sit side by side: the view keeps a real, full-width
+  // column (so what you see is what it will look like) and every control lives in the drawer.
   &__layout {
     display: block;
   }
@@ -879,250 +1022,15 @@ export default {
     flex: 1 1 auto;
   }
 
-  // Pinned to the viewport and ALWAYS full height, so the panel reaches the bottom of the screen
-  // instead of stopping wherever its content happens to end. Its own content scrolls inside it.
-  &__sidebar {
-    background:    var(--box-bg);
-    border-left:   1px solid var(--border);
-    box-sizing:    border-box;
-    flex:          0 0 280px;
-    height:        calc(100vh - var(--header-height, 54px));
-    overflow-y:    auto;
-    padding:       12px 14px 24px;
-    position:      sticky;
-    top:           0;
-    width:         280px;
-    z-index:       25;
+  // 20px around the grid in BOTH modes, so a view looks the same whether or not you are editing it.
+  &__surface {
+    padding: 20px;
   }
 
-  &__sec {
-    border-bottom:  1px solid var(--border);
-    display:        flex;
-    flex-direction: column;
-    gap:            8px;
-    padding-bottom: 14px;
-    margin-bottom:  14px;
-
-    &:last-child {
-      border-bottom: none;
-      margin-bottom: 0;
-    }
-  }
-
-  &__sec-title {
-    color:          var(--muted);
-    font-size:      11px;
-    font-weight:    600;
-    letter-spacing: 0.06em;
-    margin:         0;
-    text-transform: uppercase;
-  }
-
-  &__hint {
-    color:     var(--muted);
-    font-size: 11px;
-    margin:    0;
-
-    code {
-      padding: 0 3px;
-    }
-  }
-
-  &__row {
-    align-items: center;
-    display:     flex;
-    gap:         6px;
-  }
-
-  // T / R / B / L in one line, matching the order the tooltips describe.
-  &__sides {
-    display:               grid;
-    gap:                   4px;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  &__wide {
-    width: 100%;
-  }
-
-  &__ro {
-    color:     var(--body-text);
-    font-size: 12px;
-  }
-
-  // The bar stays pinned while the page scrolls.
-  &__bar {
-    align-items:   center;
-    background:    var(--header-bg, var(--box-bg));
-    border-bottom: 1px solid var(--border);
-    display:       flex;
-    flex-wrap:     wrap;
-    gap:           8px;
-    padding:       6px 16px;
-    position:      sticky;
-    top:           0;
-    z-index:       20;
-  }
-
-  &__tabs {
-    display: flex;
-    gap:     2px;
-  }
-
-  &__tab {
-    align-items:   center;
-    background:    transparent;
-    border:        1px solid transparent;
-    border-radius: var(--border-radius);
-    color:         var(--body-text);
-    cursor:        pointer;
-    display:       flex;
-    font-size:     13px;
-    gap:           4px;
-    padding:       3px 10px;
-
-    &:hover {
-      color: var(--link);
-    }
-
-    &--active {
-      background:   var(--body-bg);
-      border-color: var(--border);
-      font-weight:  600;
-    }
-
-    &--add {
-      padding: 3px 8px;
-    }
-  }
-
-  &__tab-x {
-    font-size: 10px;
-    opacity:   0.6;
-
-    &:hover {
-      color:   var(--error);
-      opacity: 1;
-    }
-  }
-
-  &__sep {
-    width:      1px;
-    height:     20px;
-    background: var(--border);
-    margin:     0 2px;
-  }
-
-  &__dirty {
-    color:       var(--warning);
-    font-size:   12px;
-    font-weight: 600;
-  }
-
-  &__disabled {
-    color:      var(--muted);
-    font-size:  12px;
-    font-style: italic;
-  }
-
-  &__lbl {
-    color:     var(--muted);
-    font-size: 12px;
-    margin:    0;
-
-    // Colour-keyed to the bands drawn on the canvas: amber = margin, teal = padding.
-    &--margin,
-    &--padding {
-      align-items: center;
-      display:     flex;
-      gap:         4px;
-
-      &::before {
-        border-radius: 2px;
-        content:       '';
-        height:        9px;
-        width:         9px;
-      }
-    }
-
-    &--margin::before {
-      background: rgba(247, 181, 0, 0.9);
-    }
-
-    &--padding::before {
-      background: rgba(0, 158, 158, 0.9);
-    }
-  }
-
-  &__scope {
-    display: flex;
-    gap:     2px;
-  }
-
-  &__field {
-    height:        28px;
-    border:        1px solid var(--border);
-    border-radius: var(--border-radius);
-    background:    var(--body-bg);
-    color:         var(--body-text);
-    padding:       0 8px;
-  }
-
-  &__sidebar &__field {
-    width: 100%;
-  }
-
-  &__field--sm {
-    padding:    0 6px;
-    text-align: center;
-    width:      64px;
-  }
-
-  &__sidebar &__field--sm {
-    width: auto;
-  }
-
-  &__crumbs {
-    align-items: center;
-    display:     flex;
-    flex-wrap:   wrap;
-    gap:         2px;
-  }
-
-  &__crumb {
-    background:    transparent;
-    border:        1px solid transparent;
-    border-radius: var(--border-radius);
-    color:         var(--link);
-    cursor:        pointer;
-    font-size:     12px;
-    max-width:     180px;
-    overflow:      hidden;
-    padding:       2px 6px;
-    text-overflow: ellipsis;
-    white-space:   nowrap;
-
-    &:hover {
-      background: var(--box-bg);
-    }
-
-    &--active {
-      background:   var(--box-bg);
-      border-color: var(--border);
-      color:        var(--body-text);
-      font-weight:  600;
-    }
-  }
-
-  &__crumb-sep {
-    color:     var(--muted);
-    font-size: 12px;
-  }
-
-  // No padding in view mode — the organizers own their spacing, so the Home renders edge-to-edge
-  // (e.g. a full-bleed banner) and can match a hand-built page exactly.
-  &--editing &__surface {
-    padding: 12px 16px;
+  &__error {
+    color:     var(--error);
+    font-size: 13px;
+    margin:    8px 20px 0;
   }
 }
 </style>

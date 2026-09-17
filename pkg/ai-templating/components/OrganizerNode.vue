@@ -1,14 +1,17 @@
 <script>
 import TemplatePanel from './TemplatePanel.vue';
+import WidgetHost from './widgets/WidgetHost.vue';
 import {
-  NODE_TEMPLATE, GRID_COLUMNS, cssSize, cssSides, normalizeSides, clampSpan
+  NODE_WIDGET, GRID_COLUMNS, DEFAULT_GAP, isLeaf, cssSize, cssSides, normalizeSides, clampSpan
 } from '../templating/view-model';
 
 // Recursively renders ONE node of a panel's layout tree.
 //
 //   ORGANIZER → a FLEX row (wrapping) laid out in twelfths. A nested organizer always takes a whole
-//               line, so organizers stack — an organizer is ALWAYS 100% wide.
-//   TEMPLATE  → a leaf rendering one stored template ConfigMap, sized by its col span (1..12).
+//               line, so organizers stack — an organizer is ALWAYS 100% wide. Rows are STRUCTURE,
+//               not something you configure, so in edit mode they show no chrome of their own.
+//   WIDGET    → a leaf rendering one building block from the catalog, sized by its col span (1..12).
+//   TEMPLATE  → a leaf rendering one stored template ConfigMap, sized the same way.
 //
 // Flex (not grid) is deliberate: it is what the stock Home uses, and a flex item resolves PERCENTAGE
 // margins against the whole flex container. A grid item resolves them against its own grid area, so
@@ -17,12 +20,13 @@ import {
 //     flex: 0 0 calc(<span/12>% - <margin-left> - <margin-right>)
 // so basis + margins == the span's share of the row, and nothing wraps unexpectedly.
 //
-// Outside edit mode this renders SEAMLESSLY — no chrome. In edit mode exactly ONE node shows its
-// toolbar, the selected node shows its margin/padding bands, and all chrome is painted ABOVE the
-// rendered template (which is stacking-isolated so its own z-indexes can't cover the editor).
+// Outside edit mode this renders SEAMLESSLY — no chrome. In edit mode every WIDGET wears its own
+// header ("Drag to move", settings, remove), the selected node shows its margin/padding bands, and
+// all chrome is painted ABOVE the rendered widget (which is stacking-isolated so its own z-indexes
+// can't cover the editor).
 export default {
   name:       'OrganizerNode',
-  components: { TemplatePanel },
+  components: { TemplatePanel, WidgetHost },
 
   inject: {
     viewEditor: {
@@ -30,6 +34,7 @@ export default {
         select:       () => {},
         move:         () => {},
         remove:       () => {},
+        configure:    () => {},
         editTemplate: () => {},
         beginDrag:    () => {},
         endDrag:      () => {},
@@ -59,6 +64,11 @@ export default {
       type:    Boolean,
       default: false,
     },
+    // The gap between widgets — one value for the whole VIEW, handed down the tree unchanged.
+    gap: {
+      type:    Number,
+      default: DEFAULT_GAP,
+    },
   },
 
   data() {
@@ -75,11 +85,28 @@ export default {
 
   computed: {
     isOrganizer() {
-      return this.node.type !== NODE_TEMPLATE;
+      return !isLeaf(this.node);
+    },
+
+    isWidget() {
+      return this.node.type === NODE_WIDGET;
+    },
+
+    // A widget Liz built and put on the grid to be judged. It renders with real data like any
+    // other, but wears a different colour and says plainly that it is not part of the view yet.
+    isPreview() {
+      return !!this.node.preview;
     },
 
     isSelected() {
       return this.editing && this.selectedId === this.node.id;
+    },
+
+    // The margin/padding bands answer "where do these pixels go?", which is only a question while
+    // you are typing pixels — so they are drawn only when the Layout tab's Advanced panel is open.
+    // Left on permanently they cover most of a small widget in green and fight with its own chrome.
+    showBoxModel() {
+      return this.isSelected && !!this.viewEditor.ui?.showBoxModel;
     },
 
     children() {
@@ -94,13 +121,18 @@ export default {
       return this.viewEditor.ui?.dragId === this.node.id;
     },
 
+    // Something is on its way onto the grid: either a widget already on it being moved, or a
+    // catalog entry being dragged in from the drawer. Both light up the drop targets.
     dragActive() {
-      return this.editing && !!this.viewEditor.ui?.dragId;
+      const ui = this.viewEditor.ui;
+
+      return this.editing && !!(ui?.dragId || ui?.dragEntry);
     },
 
-    // Only ONE toolbar is ever on screen: the selected node, or the innermost node under the pointer.
+    // Every LEAF wears its header while editing (that header is how you drag it), so unlike the
+    // hover-only chrome this replaced, the grid reads the same whatever the pointer is over.
     showBar() {
-      return this.editing && (this.isSelected || this.viewEditor.ui?.hoverId === this.node.id);
+      return this.editing && !this.isOrganizer;
     },
 
     span() {
@@ -137,7 +169,7 @@ export default {
         return true;
       }
 
-      return (this.children || []).some((c) => c.id === sel && c.type === NODE_TEMPLATE);
+      return (this.children || []).some((c) => c.id === sel && isLeaf(c));
     },
 
     style() {
@@ -157,14 +189,18 @@ export default {
         s.flex = '0 0 100%';
         s.minWidth = 0;
       } else {
-        // Subtract this template's own horizontal margins from the basis so basis + margins is
-        // exactly the span's share of the row (and a margin never pushes a sibling onto a new line).
-        const pct = (this.span / GRID_COLUMNS) * 100;
+        // The span's share of a 12-column row that has a GAP between every column: a span-s widget
+        // covers s columns plus the (s-1) gaps it swallows, where a column is (100% - 11 gaps)/12.
+        // Written out rather than using a CSS grid because the row is a flex line (see the note at
+        // the top of this file), and this is the arithmetic a grid would do for us.
+        const gaps = (GRID_COLUMNS - 1) * this.gap;
+        const own = (this.span - 1) * this.gap;
         const subtract = [this.margin.left, this.margin.right]
           .filter((v) => v && v !== 0)
           .map(cssSize);
+        const basis = `calc((100% - ${ gaps }px) * ${ this.span } / ${ GRID_COLUMNS } + ${ own }px${ subtract.length ? ` - ${ subtract.join(' - ') }` : '' })`;
 
-        s.flex = subtract.length ? `0 0 calc(${ pct }% - ${ subtract.join(' - ') })` : `0 0 ${ pct }%`;
+        s.flex = `0 0 ${ basis }`;
         s.minWidth = 0;
       }
 
@@ -189,6 +225,7 @@ export default {
         flexWrap:     'wrap',
         alignItems:   'flex-start',
         alignContent: 'flex-start',
+        gap:          `${ this.gap }px`,
       };
 
       if (this.isRoot) {
@@ -203,6 +240,7 @@ export default {
     guideStyle() {
       return {
         display:             'grid',
+        gap:                 `${ this.gap }px`,
         gridTemplateColumns: `repeat(${ GRID_COLUMNS }, minmax(0, 1fr))`,
       };
     },
@@ -276,14 +314,26 @@ export default {
       return out;
     },
 
-    // Templates show their name; an organizer needs no label (its frame says what it is).
+    // What the empty row at the bottom of the view invites you to do. While something is being
+    // dragged it names it ("Drop here to add a Table") so the target is unmistakable.
+    barLabel() {
+      return this.isPreview ? 'Preview from Liz. Not yet part of the view.' : 'Drag to move';
+    },
+
+    dropHint() {
+      const label = this.viewEditor.ui?.dragLabel;
+
+      return label ? `Drop here to add a ${ label }` : 'Drop a component here';
+    },
+
+    // Kept for the drag/hover logic below: a row has no header, a leaf does.
     label() {
-      return this.isOrganizer ? '' : this.node.template;
+      return this.isOrganizer ? '' : this.barLabel;
     },
   },
 
   watch: {
-    isSelected: {
+    showBoxModel: {
       immediate: true,
       handler() {
         this.scheduleMeasure();
@@ -329,7 +379,7 @@ export default {
 
     // Read the USED margin/padding (always px, whatever unit was authored) for the band overlays.
     measure() {
-      if (!this.isSelected || !this.$el?.getBoundingClientRect) {
+      if (!this.showBoxModel || !this.$el?.getBoundingClientRect) {
         this.used = null;
 
         return;
@@ -415,13 +465,13 @@ export default {
     },
 
     onDragOver(ev) {
-      if (!this.editing || !this.isOrganizer || !this.viewEditor.ui?.dragId) {
+      if (!this.editing || !this.isOrganizer || !this.dragActive) {
         return;
       }
       // Innermost organizer wins the drop.
       ev.preventDefault();
       ev.stopPropagation();
-      ev.dataTransfer.dropEffect = 'move';
+      ev.dataTransfer.dropEffect = this.viewEditor.ui?.dragEntry ? 'copy' : 'move';
       this.dropIndex = this.computeDropIndex(ev);
     },
 
@@ -498,11 +548,12 @@ export default {
       'onode--editing': editing,
       'onode--selected': isSelected,
       'onode--organizer': isOrganizer,
-      'onode--template': !isOrganizer,
+      'onode--leaf': !isOrganizer,
       'onode--root': isRoot,
       'onode--empty': isEmpty,
       'onode--dragging': beingDragged,
       'onode--drag-active': dragActive,
+      'onode--preview': isPreview,
     }"
     :style="style"
     :draggable="editing && !isRoot"
@@ -517,7 +568,7 @@ export default {
     @drop="onDrop"
   >
     <!-- Box model of the SELECTED node: amber margin outside, green padding inside. -->
-    <template v-if="isSelected">
+    <template v-if="showBoxModel">
       <div
         v-for="(band, i) in marginBands"
         :key="`m${ i }`"
@@ -532,54 +583,39 @@ export default {
       />
     </template>
 
-    <!-- The frame is a real overlay (not an `outline`) so the rendered template can never cover it. -->
+    <!-- The frame is a real overlay (not an `outline`) so the rendered widget can never cover it.
+       Only WIDGETS get one: a row is structure, and outlining every row buries the grid in boxes. -->
     <div
-      v-if="editing"
+      v-if="editing && (!isOrganizer || isEmpty)"
       class="onode__frame"
     />
 
-    <!-- Edit chrome. Only ONE of these is on screen at a time (see showBar). -->
+    <!-- A widget's own header: grab it to move the widget, or reach its settings and remove. -->
     <div
       v-if="showBar"
       class="onode__bar"
-      draggable="false"
-      @dragstart.stop.prevent
     >
-      <span
-        v-if="label"
-        class="onode__label"
-      >{{ label }}</span>
-      <template v-if="!isRoot">
-        <button
-          class="onode__btn"
-          title="Move up"
-          @click.stop="viewEditor.move(node.id, -1)"
-        >
-          ↑
-        </button>
-        <button
-          class="onode__btn"
-          title="Move down"
-          @click.stop="viewEditor.move(node.id, 1)"
-        >
-          ↓
-        </button>
-        <button
-          v-if="!isOrganizer"
-          class="onode__btn"
-          title="Edit this template's content"
-          @click.stop="viewEditor.editTemplate(node.template)"
-        >
-          ✎
-        </button>
-        <button
-          class="onode__btn onode__btn--danger"
-          title="Remove"
-          @click.stop="viewEditor.remove(node.id)"
-        >
-          ✕
-        </button>
-      </template>
+      <i
+        class="onode__grip icon"
+        :class="isPreview ? 'icon-chat' : 'icon-drag'"
+      />
+      <span class="onode__label">{{ barLabel }}</span>
+      <span class="onode__bar-gap" />
+      <button
+        class="onode__btn"
+        :title="isWidget ? 'What this widget shows' : `Edit this template's content`"
+        @click.stop="isWidget ? viewEditor.configure(node.id) : viewEditor.editTemplate(node.template)"
+      >
+        <i class="icon icon-gear" />
+      </button>
+      <button
+        v-if="!isPreview"
+        class="onode__btn onode__btn--danger"
+        title="Remove from view"
+        @click.stop="viewEditor.remove(node.id)"
+      >
+        <i class="icon icon-close" />
+      </button>
     </div>
 
     <!-- ORGANIZER: a wrapping flex row of children, sized in twelfths. -->
@@ -615,6 +651,7 @@ export default {
           :node="child"
           :editing="editing"
           :selected-id="selectedId"
+          :gap="gap"
         />
       </template>
       <div
@@ -626,15 +663,22 @@ export default {
         v-if="editing && isEmpty && dropIndex < 0"
         class="onode__empty-hint"
       >
-        Drop a template here
+        {{ dropHint }}
       </div>
     </div>
 
-    <!-- TEMPLATE: the rendered template, stacking-isolated so its own z-indexes (sticky table
-       headers, dropdowns) can never paint over the frame, bands or toolbar. -->
+    <!-- LEAF: the rendered widget (or stored template), stacking-isolated so its own z-indexes
+       (sticky table headers, dropdowns) can never paint over the frame, bands or header. -->
     <template v-else>
       <div class="onode__content">
-        <TemplatePanel :name="node.template" />
+        <WidgetHost
+          v-if="isWidget"
+          :widget="node.widget"
+        />
+        <TemplatePanel
+          v-else
+          :name="node.template"
+        />
       </div>
       <div
         v-if="editing"
@@ -679,7 +723,7 @@ export default {
     user-select: none;
   }
 
-  &--template.onode--editing {
+  &--leaf.onode--editing {
     cursor: grab;
   }
 
@@ -687,34 +731,49 @@ export default {
     opacity: 0.4;
   }
 
+  // The trailing empty row is the drop target, and says so: a tinted, dashed panel.
   &--empty.onode--editing {
-    background: var(--box-bg);
+    background:    rgba(61, 152, 211, 0.06);
+    border-radius: 4px;
   }
 
-  // ---- frame (always painted above the template) ----
+  &--empty.onode--drag-active {
+    background: rgba(61, 152, 211, 0.12);
+  }
+
+  // ---- frame (always painted above the widget) ----
   &__frame {
-    border:         1px dashed var(--border);
+    border:         1px dashed var(--link);
+    border-radius:  4px;
     inset:          0;
     pointer-events: none;
     position:       absolute;
     z-index:        4;
   }
 
-  &--editing:hover > &__frame {
-    border-color: var(--link);
-  }
-
+  // The selected widget reads as selected without moving anything: a solid border of the same
+  // weight, plus a soft ring, so nothing on the grid shifts by a pixel when you click it.
   &--selected > &__frame {
-    border:     2px solid var(--link);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6);
-  }
-
-  &--drag-active.onode--organizer > &__frame {
-    border-color: var(--link);
+    border-style: solid;
+    box-shadow:   0 0 0 2px rgba(61, 152, 211, 0.25);
   }
 
   &--empty.onode--drag-active > &__frame {
-    border: 2px dashed var(--link);
+    border-width: 2px;
+  }
+
+  // Liz's preview: the same chrome in green, so it is unmistakably a proposal and not yet yours.
+  &--preview > &__frame {
+    border-color: var(--success);
+  }
+
+  &--preview > &__bar {
+    background: rgba(0, 170, 90, 0.12);
+  }
+
+  &--preview > &__bar &__label,
+  &--preview > &__bar &__grip {
+    color: var(--success);
   }
 
   // ---- box-model bands ----
@@ -732,39 +791,51 @@ export default {
     background: rgba(0, 170, 90, 0.30);
   }
 
-  // ---- toolbar ----
+  // ---- widget header ----
+  // A 24px strip along the top of the widget, inside its dashed frame: grip + "Drag to move" on the
+  // left, settings and remove on the right.
   &__bar {
-    align-items:   center;
-    background:    var(--body-bg);
-    border:        1px solid var(--border);
-    border-radius: var(--border-radius);
-    display:       flex;
-    gap:           1px;
-    left:          2px;
-    padding:       0 2px;
-    position:      absolute;
-    top:           2px;
-    z-index:       6;
+    align-items:  center;
+    background:   var(--subtle-border, var(--box-bg));
+    box-sizing:   border-box;
+    display:      flex;
+    gap:          8px;
+    height:       24px;
+    left:         0;
+    padding:      0 6px;
+    position:     absolute;
+    right:        0;
+    top:          0;
+    z-index:      6;
+  }
+
+  &__grip {
+    color:     var(--muted);
+    font-size: 14px;
   }
 
   &__label {
     color:         var(--muted);
-    font-size:     10px;
-    margin:        0 3px;
-    max-width:     160px;
+    font-size:     12px;
     overflow:      hidden;
     text-overflow: ellipsis;
     white-space:   nowrap;
   }
 
+  &__bar-gap {
+    flex: 1 1 auto;
+  }
+
   &__btn {
+    align-items: center;
     background:  transparent;
     border:      none;
     color:       var(--body-text);
     cursor:      pointer;
-    font-size:   11px;
+    display:     flex;
+    font-size:   14px;
     line-height: 1;
-    padding:     2px 3px;
+    padding:     2px;
 
     &:hover {
       color: var(--link);
@@ -773,6 +844,12 @@ export default {
     &--danger:hover {
       color: var(--error);
     }
+  }
+
+  // The header sits over the widget, so push the widget itself down by exactly its height — nothing
+  // is ever hidden underneath it.
+  &--editing.onode--leaf > &__content {
+    padding-top: 24px;
   }
 
   // ---- column guides ----
@@ -811,12 +888,14 @@ export default {
   }
 
   &__empty-hint {
-    color:      var(--muted);
-    flex:       0 0 100%;
-    font-size:  12px;
-    font-style: italic;
-    padding:    14px;
-    text-align: center;
+    align-items:    center;
+    color:          var(--link);
+    display:        flex;
+    flex:           0 0 100%;
+    font-size:      14px;
+    justify-content: center;
+    min-height:     78px;
+    text-align:     center;
   }
 
   // Traps the rendered template's stacking context at level 0, so its own z-indexes can't cover the

@@ -1,5 +1,6 @@
 <script>
 import BannerGraphic from '@shell/components/BannerGraphic.vue';
+import { getVendor } from '@shell/config/private-label';
 
 // Welcome banner widget (JSON template building block). By DEFAULT it renders the exact stock
 // BannerGraphic (brand image + title). Provide `image` to use your own background image, and
@@ -24,6 +25,17 @@ export default {
     bgStyle() {
       return this.widget.image ? { backgroundImage: `url('${ this.widget.image }')` } : {};
     },
+
+    // With no title of its own the banner falls back to Rancher's own welcome line — the same
+    // string the stock Home shows, vendor and all — so dropping a banner on the grid gives you the
+    // real thing rather than an untitled picture.
+    title() {
+      if (this.widget.title) {
+        return this.widget.title;
+      }
+
+      return this.widget.titleKey ? null : this.$store.getters['i18n/t']('landing.welcomeToRancher', { vendor: getVendor() });
+    },
   },
 };
 </script>
@@ -37,7 +49,7 @@ export default {
   >
     <div class="wb__text">
       <h1 class="wb__title">
-        {{ widget.title || 'Welcome' }}
+        {{ title || 'Welcome' }}
       </h1>
       <p
         v-if="widget.subtitle"
@@ -51,7 +63,7 @@ export default {
   <!-- …otherwise the exact stock Home banner. -->
   <BannerGraphic
     v-else
-    :title="widget.title || null"
+    :title="title"
     :title-key="widget.titleKey || null"
   />
 </template>

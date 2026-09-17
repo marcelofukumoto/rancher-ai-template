@@ -2,8 +2,8 @@
 import TemplateCode from './TemplateCode.vue';
 import TemplateResourceList from './TemplateResourceList.vue';
 import TemplateOverview from './TemplateOverview.vue';
-import WidgetBanner from './WidgetBanner.vue';
-import WidgetLinks from './WidgetLinks.vue';
+import WidgetBanner from './widgets/WidgetBanner.vue';
+import WidgetLinks from './widgets/WidgetLinks.vue';
 import WidgetClusterList from './WidgetClusterList.vue';
 import { templateByName } from '../templating/template-engine';
 
