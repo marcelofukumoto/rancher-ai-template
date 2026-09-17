@@ -72,18 +72,8 @@ export default {
       return this.node.type === NODE_WIDGET;
     },
 
-    // A widget Liz built and put on the grid to be judged. It renders with real data like any
-    // other, but wears a different colour and says plainly that it is not part of the view yet.
-    isPreview() {
-      return !!this.node.preview;
-    },
-
     beingDragged() {
       return this.viewEditor.ui?.dragId === this.node.id;
-    },
-
-    barLabel() {
-      return this.isPreview ? 'Preview from Liz. Not yet part of the view.' : 'Drag to move';
     },
 
     span() {
@@ -341,7 +331,6 @@ export default {
       'wnode--editing': editing,
       'wnode--selected': selected,
       'wnode--dragging': beingDragged,
-      'wnode--preview': isPreview,
     }"
     :style="style"
     :draggable="editing"
@@ -377,11 +366,8 @@ export default {
       v-if="editing"
       class="wnode__bar"
     >
-      <i
-        class="wnode__grip icon"
-        :class="isPreview ? 'icon-chat' : 'icon-menu'"
-      />
-      <span class="wnode__label">{{ barLabel }}</span>
+      <i class="wnode__grip icon icon-menu" />
+      <span class="wnode__label">Drag to move</span>
       <span class="wnode__bar-gap" />
       <button
         class="wnode__btn"
@@ -391,7 +377,6 @@ export default {
         <i class="icon icon-gear" />
       </button>
       <button
-        v-if="!isPreview"
         class="wnode__btn wnode__btn--danger"
         title="Remove from view"
         @click.stop="viewEditor.remove(node.id)"
@@ -463,20 +448,6 @@ export default {
   &--selected > &__frame {
     border-style: solid;
     box-shadow:   0 0 0 2px var(--accent-btn);
-  }
-
-  // Liz's preview: the same chrome in green, so it is unmistakably a proposal and not yet yours.
-  &--preview > &__frame {
-    border-color: var(--success);
-  }
-
-  &--preview > &__bar {
-    background: rgba(0, 170, 90, 0.12);
-  }
-
-  &--preview > &__bar &__label,
-  &--preview > &__bar &__grip {
-    color: var(--success);
   }
 
   // ---- box-model bands ----

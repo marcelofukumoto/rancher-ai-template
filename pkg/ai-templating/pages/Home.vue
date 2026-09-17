@@ -78,7 +78,6 @@ export default {
       startedFrom:            '', // what a new view was started from, for the bar's "From …"
       settingsNodeId:         null, // widget whose settings panel is open
       settingsAnchor:         null, // where that widget is on screen, so the panel opens beside it
-      lizPreviewId:           null, // Liz's preview widget, on the grid but not yet part of the view
       editingTemplate:        null, // stored template whose CONTENT is open in the split editor
       editingTemplateNewKind: null,
       editingTemplateNewName: '',
@@ -202,11 +201,6 @@ export default {
       return findWidget(this.widgets, this.settingsNodeId);
     },
 
-    // Liz needs the AI agent CRD to be installed before offering to build anything.
-    lizEnabled() {
-      return !!this.$store.getters['management/schemaFor']('ai.cattle.io.aiagentconfig');
-    },
-
     // The starting points a brand-new view offers: empty, or a copy of any view you already have.
     startingPoints() {
       return this.views
@@ -315,7 +309,6 @@ export default {
       this.startedFrom = '';
       this.selectedNodeId = null;
       this.settingsNodeId = null;
-      this.lizPreviewId = null;
       await fetchTemplatingConfigMaps(this.$store).catch(() => {});
       this.syncActivePanel();
     },
@@ -364,7 +357,6 @@ export default {
       this.error = '';
 
       try {
-        this.discardLizPreview();
         this.pruneUntouchedForks();
         await saveView(this.$store, 'user', this.working, this.userId);
         this.savedBaseline = JSON.stringify(this.working);
@@ -778,9 +770,6 @@ export default {
       if (this.settingsNodeId === id) {
         this.settingsNodeId = null;
       }
-      if (this.lizPreviewId === id) {
-        this.lizPreviewId = null;
-      }
     },
 
     moveWidget(id, delta) {
@@ -809,37 +798,6 @@ export default {
       this.settingsAnchor = null;
       if (id) {
         this.removeNode(id);
-      }
-    },
-
-    // ---- Liz ----------------------------------------------------------------------------------
-
-    // Liz's widget is put on the grid as a PREVIEW: a real widget with real data, marked so it is
-    // obviously not part of the view yet. "Add to view" just drops the mark.
-    onLizPreview({ widget, span, state }) {
-      this.discardLizPreview();
-
-      if (state === 'preview' && widget) {
-        const node = newWidgetNode(widget, { colSpan: span || 6 });
-
-        node.preview = true;
-        this.mutate((widgets) => insertWidget(widgets, node));
-        this.lizPreviewId = node.id;
-        this.selectedNodeId = node.id;
-      } else if (state === 'add' && widget) {
-        const node = newWidgetNode(widget, { colSpan: span || 6 });
-
-        this.mutate((widgets) => insertWidget(widgets, node));
-        this.selectedNodeId = node.id;
-      }
-    },
-
-    discardLizPreview() {
-      if (this.lizPreviewId) {
-        const id = this.lizPreviewId;
-
-        this.lizPreviewId = null;
-        this.mutate((widgets) => removeWidget(widgets, id));
       }
     },
 
@@ -938,7 +896,6 @@ export default {
           :view="activeView"
           :selected="selectedNode"
           :is-default="activePanelId === defaultViewId"
-          :liz-enabled="lizEnabled"
           :is-stock="activeIsStock"
           :is-new="isNewView"
           :started-from="startedFrom"
@@ -960,7 +917,6 @@ export default {
           @set-default="setDefaultView"
           @publish="publishView"
           @delete="deleteView"
-          @liz-preview="onLizPreview"
         />
       </div>
     </template>

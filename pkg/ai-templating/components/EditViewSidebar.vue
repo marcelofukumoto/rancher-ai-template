@@ -1,6 +1,5 @@
 <script>
 import CatalogTile from './CatalogTile.vue';
-import LizWidgetPanel from './LizWidgetPanel.vue';
 import { BUILDING_BLOCKS, READY_MADE, searchCatalog, blockName } from '../templating/widget-catalog';
 import {
   NODE_WIDGET, WIDTH_PRESETS, HEIGHT_PRESETS, SPACING_PRESETS, COLUMN_SPANS,
@@ -14,14 +13,10 @@ import {
 //   LAYOUT  how the SELECTED widget sits — width, height, spacing, and exact pixels under Advanced.
 //   VIEW    what is true of the WHOLE view — its name, its gap, whether it is your default.
 //
-// Liz is not one of the tabs. In the design she is the drawer's OTHER face: the same 380px slot,
-// titled "Liz" with a Go back out of it, rather than a box wedged above the catalog. So the Add tab
-// is only ever the catalog, which is what it is for.
-//
-// Everything is emitted; the drawer holds only its own face, tab, search box and Advanced toggle.
+// Everything is emitted; the drawer holds only its own tab, search box and Advanced toggle.
 export default {
   name:       'EditViewSidebar',
-  components: { CatalogTile, LizWidgetPanel },
+  components: { CatalogTile },
 
   props: {
     // The view being edited (a panel).
@@ -35,11 +30,6 @@ export default {
       default: null,
     },
     isDefault: {
-      type:    Boolean,
-      default: false,
-    },
-    // Liz only appears when the AI agent is actually available.
-    lizEnabled: {
       type:    Boolean,
       default: false,
     },
@@ -68,13 +58,11 @@ export default {
   emits: [
     'close', 'add', 'drag-start', 'drag-end', 'set-width', 'set-height', 'set-spacing',
     'set-box', 'set-col-span', 'set-gap', 'set-name', 'set-default', 'publish', 'delete',
-    'liz-preview', 'start-from', 'advanced', 'set-page-padding'
+    'start-from', 'advanced', 'set-page-padding'
   ],
 
   data() {
     return {
-      // Which face the drawer is showing: the editor, or Liz.
-      face:         'edit',
       tab:          'add',
       search:       '',
       advancedOpen: false,
@@ -148,40 +136,11 @@ export default {
 <template>
   <aside class="evs">
     <header class="evs__head">
-      <h3
-        v-if="face === 'liz'"
-        class="evs__title"
-      >
-        Liz
-      </h3>
-      <h3
-        v-else
-        class="evs__title"
-      >
+      <h3 class="evs__title">
         Edit view<template v-if="view">
           &nbsp;-&nbsp; {{ view.name }}
         </template>
       </h3>
-
-      <!-- The design's nav slot, left of Close: into Liz from the editor, back out of her. -->
-      <button
-        v-if="face === 'liz'"
-        class="evs__nav"
-        @click="face = 'edit'"
-      >
-        <i class="icon icon-chevron-left" />
-        Go back
-      </button>
-      <button
-        v-else-if="lizEnabled"
-        class="evs__nav"
-        @click="face = 'liz'"
-      >
-        <!-- icon-chat does not exist in the shell's font — it renders nothing at all. -->
-        <i class="icon icon-comment" />
-        Ask Liz
-      </button>
-
       <button
         class="evs__close"
         title="Close"
@@ -192,16 +151,7 @@ export default {
       </button>
     </header>
 
-    <LizWidgetPanel
-      v-if="face === 'liz'"
-      :view-name="view ? view.name : ''"
-      @preview="$emit('liz-preview', $event)"
-    />
-
-    <nav
-      v-if="face === 'edit'"
-      class="evs__tabs"
-    >
+    <nav class="evs__tabs">
       <button
         v-for="t in [{ id: 'add', label: 'Add' }, { id: 'layout', label: 'Layout' }, { id: 'view', label: 'View' }]"
         :key="t.id"
@@ -214,7 +164,6 @@ export default {
     </nav>
 
     <div
-      v-if="face === 'edit'"
       class="evs__body"
       :class="{ 'evs__body--layout': tab === 'layout' }"
     >
@@ -590,32 +539,6 @@ export default {
     overflow:      hidden;
     text-overflow: ellipsis;
     white-space:   nowrap;
-  }
-
-  // The design's history nav, between the title and Close: a quiet 12px text button.
-  &__nav {
-    align-items: center;
-    background:  transparent;
-    border:      none;
-    color:       var(--link);
-    cursor:      pointer;
-    display:     flex;
-    font-size:   12px;
-    gap:         4px;
-    height:      32px;
-    line-height: 20px;
-    margin-left: auto;
-    margin-right: 4px;
-    min-height:  0;
-    padding:     0 6px;
-
-    i {
-      font-size: 14px;
-    }
-
-    &:hover {
-      text-decoration: underline;
-    }
   }
 
   &__close {
