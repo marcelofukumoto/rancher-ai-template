@@ -4,11 +4,18 @@ import {
   SUGGESTED_RESOURCES, blockName, WIDGET_TABLE, WIDGET_LIST, WIDGET_TEXT, WIDGET_LINKS, WIDGET_TIME_SERIES, WIDGET_BANNER
 } from '../templating/widget-catalog';
 
-// "What this widget shows" — the dialog behind a widget's ⚙.
+// "What this widget shows" — the panel behind a widget's ⚙.
+//
+// IN PLACE, deliberately: it opens beside the widget it belongs to, over a page that stays lit,
+// because the thing you are describing is right there and you want to keep seeing it. A centred
+// modal over a dimmed page would hide exactly what you are configuring.
 //
 // It edits a COPY and only hands it back on Done, so Cancel really does leave the widget alone. The
 // fields shown depend on the building block: a table needs columns and a sort, a text note needs a
 // body, a links list needs links — asking a Text widget which columns to show would be nonsense.
+const PANEL_WIDTH = 400;
+const MARGIN = 12;
+
 export default {
   name: 'WidgetSettingsModal',
 
@@ -16,6 +23,11 @@ export default {
     widget: {
       type:     Object,
       required: true,
+    },
+    // Where on screen the widget sits, so the panel can open next to it.
+    anchor: {
+      type:    Object,
+      default: null,
     },
   },
 
@@ -31,6 +43,27 @@ export default {
   },
 
   computed: {
+    // Sit against the widget's left edge and stay on screen. Falls back to the middle of the
+    // viewport when we were not told where the widget is.
+    position() {
+      const a = this.anchor;
+      const bar = document.querySelector('.vbar');
+      // Never over the view bar: Cancel and Save live there and stay reachable with this open.
+      const floor = bar ? Math.round(bar.getBoundingClientRect().bottom) + 8 : MARGIN;
+
+      if (!a) {
+        return {
+          left: '50%', top: `${ floor }px`, transform: 'translateX(-50%)'
+        };
+      }
+
+      const maxLeft = window.innerWidth - PANEL_WIDTH - MARGIN;
+      const left = Math.max(MARGIN, Math.min(a.left, maxLeft));
+      const top = Math.max(floor, Math.min(a.top, window.innerHeight - 200));
+
+      return { left: `${ left }px`, top: `${ top }px` };
+    },
+
     // "Clusters: what this table shows" — the widget's own title, then what kind of thing it is.
     heading() {
       const what = blockName(this.draft.kind).toLowerCase();
@@ -98,10 +131,20 @@ export default {
       }
     };
     window.addEventListener('keydown', this.onKey);
+
+    // With no scrim there is nothing to click "through" to, so a click anywhere outside closes it.
+    // Deferred past this tick so the very click that opened it does not immediately close it.
+    this.onOutside = (ev) => {
+      if (!this.$el?.contains(ev.target)) {
+        this.$emit('cancel');
+      }
+    };
+    setTimeout(() => document.addEventListener('mousedown', this.onOutside), 0);
   },
 
   beforeUnmount() {
     window.removeEventListener('keydown', this.onKey);
+    document.removeEventListener('mousedown', this.onOutside);
   },
 
   methods: {
@@ -130,13 +173,11 @@ export default {
 <template>
   <div
     class="wsm"
-    @click.self="$emit('cancel')"
+    :style="position"
+    role="dialog"
+    aria-label="Widget settings"
   >
-    <div
-      class="wsm__dialog"
-      role="dialog"
-      aria-modal="true"
-    >
+    <div class="wsm__dialog">
       <header class="wsm__head">
         <h3 class="wsm__title">
           <i class="icon icon-gear" />
@@ -343,35 +384,33 @@ export default {
             placeholder="Leave empty for the Rancher banner"
           >
         </template>
-      </div>
 
-      <footer class="wsm__foot">
-        <button
-          class="btn btn-sm role-secondary"
-          @click="$emit('remove')"
-        >
-          Remove from view
-        </button>
-        <button
-          class="btn btn-sm role-primary"
-          @click="$emit('done', draft)"
-        >
-          Done
-        </button>
-      </footer>
+
+        <footer class="wsm__foot">
+          <button
+            class="btn btn-sm role-secondary"
+            @click="$emit('remove')"
+          >
+            Remove from view
+          </button>
+          <button
+            class="btn btn-sm role-primary"
+            @click="$emit('done', draft)"
+          >
+            Done
+          </button>
+        </footer>
+      </div>
     </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
+// 400px wide, sitting over the page rather than behind a scrim. Sizes are the design's: a 42px
+// header, a 14/16/16 body whose fields are 8px apart, controls 24px tall, and a 32px footer row.
 .wsm {
-  align-items:     center;
-  background:      rgba(0, 0, 0, 0.35);
-  display:         flex;
-  inset:           0;
-  justify-content: center;
-  position:        fixed;
-  z-index:         200;
+  position: fixed;
+  z-index:  200;
 
   &__dialog {
     background:     var(--body-bg);
@@ -380,33 +419,51 @@ export default {
     box-shadow:     0 8px 32px rgba(0, 0, 0, 0.25);
     display:        flex;
     flex-direction: column;
-    max-height:     86vh;
-    width:          560px;
+    max-height:     min(86vh, 720px);
+    width:          400px;
   }
 
   &__head {
     align-items:     center;
     border-bottom:   1px solid var(--border);
+    box-sizing:      border-box;
     display:         flex;
-    justify-content: space-between;
-    padding:         16px 20px;
+    gap:             8px;
+    height:          42px;
+    padding:         12px 12px 12px 16px;
   }
 
   &__title {
     align-items: center;
     display:     flex;
-    font-size:   16px;
-    font-weight: 600;
+    flex:        1 1 auto;
+    font-size:   14px;
+    font-weight: 700;
     gap:         8px;
+    // Pinned, or the default line box makes the 42px header grow to 48.
+    line-height: 17px;
     margin:      0;
+    min-width:   0;
+    overflow:    hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    i {
+      flex:      0 0 auto;
+      font-size: 16px;
+    }
   }
 
   &__close {
-    background: transparent;
-    border:     none;
-    color:      var(--body-text);
-    cursor:     pointer;
-    font-size:  16px;
+    background:  transparent;
+    border:      none;
+    color:       var(--body-text);
+    cursor:      pointer;
+    display:     flex;
+    font-size:   16px;
+    line-height: 1;
+    min-height:  0;
+    padding:     0;
 
     &:hover {
       color: var(--link);
@@ -416,19 +473,25 @@ export default {
   &__body {
     display:        flex;
     flex-direction: column;
-    gap:            6px;
+    gap:            8px;
     overflow-y:     auto;
-    padding:        20px;
+    padding:        14px 16px 16px;
+
+    // Same reason as the drawer: a column flex container squashes fixed-height controls before it
+    // agrees to overflow, so nothing in here shrinks.
+    > * {
+      flex: 0 0 auto;
+    }
   }
 
+  // A field's label sits 6px above its control; the 8px between FIELDS comes from the body's gap.
   &__label {
-    font-size:   13px;
-    font-weight: 600;
-    margin-top:  10px;
-
-    &:first-child {
-      margin-top: 0;
-    }
+    color:         var(--muted);
+    display:       block;
+    font-size:     12px;
+    font-weight:   700;
+    line-height:   14px;
+    margin-bottom: 6px;
   }
 
   &__field {
@@ -439,21 +502,22 @@ export default {
     color:         var(--body-text);
     font-family:   inherit;
     font-size:     14px;
-    height:        32px;
-    padding:       0 10px;
+    height:        24px;
+    padding:       0 8px;
     width:         100%;
 
     &--area {
-      height:     auto;
-      padding:    8px 10px;
-      resize:     vertical;
+      height:  auto;
+      padding: 6px 8px;
+      resize:  vertical;
     }
   }
 
   &__hint {
-    color:     var(--muted);
-    font-size: 12px;
-    margin:    0;
+    color:       var(--muted);
+    font-size:   12px;
+    line-height: 14px;
+    margin:      6px 0 0;
   }
 
   &__radio {
@@ -461,19 +525,20 @@ export default {
     display:     flex;
     font-size:   14px;
     gap:         8px;
+    line-height: 17px;
   }
 
   // Three across, as the design lays the column checkboxes out.
   &__columns {
     display:               grid;
-    gap:                   8px 16px;
+    gap:                   4px 12px;
     grid-template-columns: repeat(3, minmax(0, 1fr));
 
     label {
       align-items: center;
       display:     flex;
       font-size:   14px;
-      gap:         8px;
+      gap:         6px;
     }
   }
 
@@ -486,9 +551,10 @@ export default {
   &__foot {
     border-top:      1px solid var(--border);
     display:         flex;
-    gap:             8px;
+    gap:             12px;
     justify-content: flex-end;
-    padding:         16px 20px;
+    margin-top:      6px;
+    padding-top:     12px;
   }
 }
 </style>

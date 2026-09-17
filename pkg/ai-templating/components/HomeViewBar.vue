@@ -267,15 +267,20 @@ export default {
     margin:      0 20px 0 0;
   }
 
+  // The views are a SEGMENTED CONTROL: one track, the buttons sitting in it a pixel apart, the
+  // active one filled. That is what makes them read as "pick one of these" rather than as links.
+  //
   // One row, always. When the bar runs out of room the hint gives way first (below), then the
-  // strip of views scrolls — it never wraps onto a second line.
+  // track scrolls — it never wraps onto a second line.
   &__views {
-    align-items: center;
-    display:     flex;
-    flex:        0 1 auto;
-    gap:         1px;
-    min-width:   0;
-    overflow-x:  auto;
+    align-items:     center;
+    background:      var(--default);
+    border-radius:   4px;
+    display:         flex;
+    flex:            0 1 auto;
+    gap:             1px;
+    min-width:       0;
+    overflow-x:      auto;
     scrollbar-width: none;
 
     &::-webkit-scrollbar {
@@ -287,13 +292,18 @@ export default {
   &__view {
     background:    transparent;
     border:        none;
-    flex:          0 0 auto;
-    border-radius: var(--border-radius);
+    border-radius: 4px;
     color:         var(--body-text);
     cursor:        pointer;
+    flex:          0 0 auto;
     font-size:     14px;
+    // The shell's global button rule sets a 40px min-height and line-height; a segmented control
+    // is 30px, so both have to be said explicitly.
     height:        30px;
+    line-height:   30px;
+    min-height:    30px;
     padding:       0 12px;
+    white-space:   nowrap;
 
     &:hover:not(:disabled):not(&--active) {
       background: var(--accent-btn);
@@ -316,6 +326,11 @@ export default {
     flex:    0 0 auto;
   }
 
+  // The name box replaces a tab inside the track, so it keeps the track's height and sits flush.
+  &--editing &__views {
+    padding: 0;
+  }
+
   &__name {
     background:    var(--body-bg);
     border:        1px solid var(--primary);
@@ -323,7 +338,8 @@ export default {
     box-sizing:    border-box;
     color:         var(--body-text);
     font-size:     14px;
-    height:        33px;
+    height:        30px;
+    min-height:    30px;
     padding:       0 10px;
     width:         180px;
   }
@@ -361,24 +377,28 @@ export default {
   }
 
   // ---- icon buttons + overflow menu ----
+  // 38x32, and always in the accent style the design draws them in — they are the two ways into
+  // editing, not incidental icons that only light up when you find them.
   &__icon-btn {
-    align-items:    center;
-    flex:           0 0 auto;
-    background:     transparent;
-    border:         1px solid var(--border);
-    border-radius:  var(--border-radius);
-    color:          var(--body-text);
-    cursor:         pointer;
-    display:        flex;
-    height:         32px;
+    align-items:     center;
+    background:      var(--accent-btn);
+    border:          1px solid var(--primary);
+    border-radius:   4px;
+    color:           var(--primary);
+    cursor:          pointer;
+    display:         flex;
+    flex:            0 0 auto;
+    height:          32px;
     justify-content: center;
-    width:          36px;
+    line-height:     1;
+    min-height:      32px;
+    padding:         0;
+    width:           38px;
 
     &:hover,
     &--on {
-      background:   var(--accent-btn);
-      border-color: var(--primary);
-      color:        var(--primary);
+      background: var(--primary);
+      color:      var(--primary-text);
     }
 
     i {

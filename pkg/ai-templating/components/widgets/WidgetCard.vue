@@ -76,7 +76,8 @@ export default {
 </template>
 
 <style lang="scss" scoped>
-// Sizes come straight from the design: title 18/600, body 14, the card a 1px border at radius 4.
+// Straight from the design: a 1px border at radius 4, a 56px header (12px above and below a
+// 32px title block) and a 16px content inset with no extra gap under the header.
 .wcard {
   background:     var(--simple-box-bg, var(--body-bg));
   border:         1px solid var(--border);
@@ -87,20 +88,21 @@ export default {
   height:         100%;
   min-height:     0;
   overflow:       hidden;
-  padding:        20px 24px;
 
   &__head {
-    align-items:   center;
-    display:       flex;
-    flex:          0 0 auto;
-    gap:           10px;
-    margin-bottom: 16px;
+    align-items: center;
+    box-sizing:  border-box;
+    display:     flex;
+    flex:        0 0 auto;
+    gap:         10px;
+    min-height:  56px;
+    padding:     12px 16px;
   }
 
   &__title {
     font-size:   18px;
     font-weight: 600;
-    line-height: 1.2;
+    line-height: 22px;
     margin:      0;
   }
 
@@ -114,10 +116,16 @@ export default {
   }
 
   &__body {
-    flex:      1 1 auto;
-    font-size: 14px;
+    flex:       1 1 auto;
+    font-size:  14px;
     min-height: 0;
-    overflow:  auto;
+    overflow:   auto;
+    padding:    0 16px 16px;
+  }
+
+  // A card with no heading (the banner, a bare links box) still owes its content the same inset.
+  &__body:first-child {
+    padding-top: 16px;
   }
 
   &__msg {

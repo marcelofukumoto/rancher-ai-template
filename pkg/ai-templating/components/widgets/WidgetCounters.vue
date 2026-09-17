@@ -57,12 +57,12 @@ export default {
 .wcounters {
   display:   flex;
   flex-wrap: wrap;
-  gap:       12px 40px;
+  gap:       12px 32px;
 
   &__item {
     display:        flex;
     flex-direction: column;
-    gap:            6px;
+    gap:            2px;
   }
 
   &__value {

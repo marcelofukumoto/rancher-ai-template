@@ -53,7 +53,7 @@ export default {
 .wbars {
   display:        flex;
   flex-direction: column;
-  gap:            12px;
+  gap:            8px;
   list-style:     none;
   margin:         0;
   padding:        0;

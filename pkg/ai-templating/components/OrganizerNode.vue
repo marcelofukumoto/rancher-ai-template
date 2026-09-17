@@ -398,6 +398,20 @@ export default {
       };
     },
 
+    // Hand the panel this widget's position so it opens beside it rather than in the middle of
+    // the screen — the whole point of settings "in place".
+    openSettings() {
+      if (!this.isWidget) {
+        this.viewEditor.editTemplate(this.node.template);
+
+        return;
+      }
+
+      const r = this.$el?.getBoundingClientRect?.();
+
+      this.viewEditor.configure(this.node.id, r ? { left: Math.round(r.left), top: Math.round(r.top) } : null);
+    },
+
     onSelect(ev) {
       if (!this.editing) {
         return;
@@ -604,7 +618,7 @@ export default {
       <button
         class="onode__btn"
         :title="isWidget ? 'What this widget shows' : `Edit this template's content`"
-        @click.stop="isWidget ? viewEditor.configure(node.id) : viewEditor.editTemplate(node.template)"
+        @click.stop="openSettings"
       >
         <i class="icon icon-gear" />
       </button>
@@ -731,19 +745,15 @@ export default {
     opacity: 0.4;
   }
 
-  // The trailing empty row is the drop target, and says so: a tinted, dashed panel.
+  // The trailing empty row is the drop target, and says so: a tinted panel with a 2px dashed edge.
   &--empty.onode--editing {
-    background:    rgba(61, 152, 211, 0.06);
+    background:    var(--accent-btn);
     border-radius: 4px;
-  }
-
-  &--empty.onode--drag-active {
-    background: rgba(61, 152, 211, 0.12);
   }
 
   // ---- frame (always painted above the widget) ----
   &__frame {
-    border:         1px dashed var(--link);
+    border:         1px dashed var(--primary);
     border-radius:  4px;
     inset:          0;
     pointer-events: none;
@@ -755,10 +765,10 @@ export default {
   // weight, plus a soft ring, so nothing on the grid shifts by a pixel when you click it.
   &--selected > &__frame {
     border-style: solid;
-    box-shadow:   0 0 0 2px rgba(61, 152, 211, 0.25);
+    box-shadow:   0 0 0 2px var(--accent-btn);
   }
 
-  &--empty.onode--drag-active > &__frame {
+  &--empty > &__frame {
     border-width: 2px;
   }
 
@@ -795,23 +805,23 @@ export default {
   // A 24px strip along the top of the widget, inside its dashed frame: grip + "Drag to move" on the
   // left, settings and remove on the right.
   &__bar {
-    align-items:  center;
-    background:   var(--subtle-border, var(--box-bg));
-    box-sizing:   border-box;
-    display:      flex;
-    gap:          8px;
-    height:       24px;
-    left:         0;
-    padding:      0 6px;
-    position:     absolute;
-    right:        0;
-    top:          0;
-    z-index:      6;
+    align-items: center;
+    background:  var(--sortable-table-header-bg, var(--box-bg));
+    box-sizing:  border-box;
+    display:     flex;
+    gap:         8px;
+    height:      24px;
+    left:        0;
+    padding:     0 8px;
+    position:    absolute;
+    right:       0;
+    top:         0;
+    z-index:     6;
   }
 
   &__grip {
-    color:     var(--muted);
-    font-size: 14px;
+    color:     var(--body-text);
+    font-size: 16px;
   }
 
   &__label {
@@ -833,9 +843,10 @@ export default {
     color:       var(--body-text);
     cursor:      pointer;
     display:     flex;
-    font-size:   14px;
+    font-size:   16px;
     line-height: 1;
-    padding:     2px;
+    min-height:  0;
+    padding:     0;
 
     &:hover {
       color: var(--link);
@@ -868,7 +879,7 @@ export default {
     }
 
     &--active span {
-      border-color: var(--link);
+      border-color: var(--primary);
     }
   }
 
@@ -879,7 +890,7 @@ export default {
 
   // Insertion marker shown while dragging.
   &__drop {
-    background:    var(--link);
+    background:    var(--primary);
     border-radius: 2px;
     flex:          0 0 100%;
     height:        3px;
@@ -888,14 +899,14 @@ export default {
   }
 
   &__empty-hint {
-    align-items:    center;
-    color:          var(--link);
-    display:        flex;
-    flex:           0 0 100%;
-    font-size:      14px;
+    align-items:     center;
+    color:           var(--primary);
+    display:         flex;
+    flex:            0 0 100%;
+    font-size:       14px;
     justify-content: center;
-    min-height:     78px;
-    text-align:     center;
+    min-height:      78px;
+    text-align:      center;
   }
 
   // Traps the rendered template's stacking context at level 0, so its own z-indexes can't cover the
@@ -935,12 +946,12 @@ export default {
 
     &:hover::after,
     &--active::after {
-      background: var(--link);
+      background: var(--primary);
     }
   }
 
   &__span {
-    background:     var(--link);
+    background:     var(--primary);
     border-radius:  var(--border-radius);
     bottom:         6px;
     color:          var(--body-bg);

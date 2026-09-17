@@ -166,7 +166,10 @@ export default {
       </button>
     </nav>
 
-    <div class="evs__body">
+    <div
+      class="evs__body"
+      :class="{ 'evs__body--layout': tab === 'layout' }"
+    >
       <!-- A stock view is Rancher's own Home with no grid behind it: nothing to add, nothing to
          lay out. Its View tab still works — it can be named, defaulted and deleted like any other. -->
       <p
@@ -292,49 +295,55 @@ export default {
         </p>
 
         <template v-if="selected">
-          <h4 class="evs__group">
-            Width
-          </h4>
-          <div class="evs__pills">
-            <button
-              v-for="w in widths"
-              :key="w.id"
-              class="evs__pill"
-              :class="{ 'evs__pill--on': widthPreset === w.id }"
-              @click="$emit('set-width', w.span)"
-            >
-              {{ w.label }}
-            </button>
+          <div class="evs__control">
+            <h4 class="evs__label">
+              Width
+            </h4>
+            <div class="evs__seg">
+              <button
+                v-for="w in widths"
+                :key="w.id"
+                class="evs__pill"
+                :class="{ 'evs__pill--on': widthPreset === w.id }"
+                @click="$emit('set-width', w.span)"
+              >
+                {{ w.label }}
+              </button>
+            </div>
           </div>
 
-          <h4 class="evs__group">
-            Height
-          </h4>
-          <div class="evs__pills">
-            <button
-              v-for="h in heights"
-              :key="h.id"
-              class="evs__pill"
-              :class="{ 'evs__pill--on': heightPreset === h.id }"
-              @click="$emit('set-height', h.id)"
-            >
-              {{ h.label }}
-            </button>
+          <div class="evs__control">
+            <h4 class="evs__label">
+              Height
+            </h4>
+            <div class="evs__seg">
+              <button
+                v-for="h in heights"
+                :key="h.id"
+                class="evs__pill"
+                :class="{ 'evs__pill--on': heightPreset === h.id }"
+                @click="$emit('set-height', h.id)"
+              >
+                {{ h.label }}
+              </button>
+            </div>
           </div>
 
-          <h4 class="evs__group">
-            Spacing
-          </h4>
-          <div class="evs__pills">
-            <button
-              v-for="s in spacings"
-              :key="s.id"
-              class="evs__pill"
-              :class="{ 'evs__pill--on': spacingPreset === s.id }"
-              @click="$emit('set-spacing', s.id)"
-            >
-              {{ s.label }}
-            </button>
+          <div class="evs__control">
+            <h4 class="evs__label">
+              Spacing
+            </h4>
+            <div class="evs__seg">
+              <button
+                v-for="s in spacings"
+                :key="s.id"
+                class="evs__pill"
+                :class="{ 'evs__pill--on': spacingPreset === s.id }"
+                @click="$emit('set-spacing', s.id)"
+              >
+                {{ s.label }}
+              </button>
+            </div>
           </div>
 
           <button
@@ -354,55 +363,61 @@ export default {
               Exact values in pixels. Overrides the Spacing preset for this component only.
             </p>
 
-            <h4 class="evs__group evs__group--margin">
-              Margin
-            </h4>
-            <div class="evs__sides">
-              <label
-                v-for="side in sides"
-                :key="`m-${ side }`"
-              >
-                <input
-                  class="evs__field evs__field--num"
-                  type="number"
-                  :value="selected.margin[side]"
-                  @change="$emit('set-box', 'margin', side, $event.target.value)"
+            <div class="evs__control">
+              <h4 class="evs__label evs__label--margin">
+                Margin
+              </h4>
+              <div class="evs__sides">
+                <label
+                  v-for="side in sides"
+                  :key="`m-${ side }`"
                 >
-                <span>{{ sideLabel(side) }}</span>
-              </label>
+                  <input
+                    class="evs__field evs__field--num"
+                    type="number"
+                    :value="selected.margin[side]"
+                    @change="$emit('set-box', 'margin', side, $event.target.value)"
+                  >
+                  <span>{{ sideLabel(side) }}</span>
+                </label>
+              </div>
             </div>
 
-            <h4 class="evs__group evs__group--padding">
-              Padding
-            </h4>
-            <div class="evs__sides">
-              <label
-                v-for="side in sides"
-                :key="`p-${ side }`"
-              >
-                <input
-                  class="evs__field evs__field--num"
-                  type="number"
-                  :value="selected.padding[side]"
-                  @change="$emit('set-box', 'padding', side, $event.target.value)"
+            <div class="evs__control">
+              <h4 class="evs__label evs__label--padding">
+                Padding
+              </h4>
+              <div class="evs__sides">
+                <label
+                  v-for="side in sides"
+                  :key="`p-${ side }`"
                 >
-                <span>{{ sideLabel(side) }}</span>
-              </label>
+                  <input
+                    class="evs__field evs__field--num"
+                    type="number"
+                    :value="selected.padding[side]"
+                    @change="$emit('set-box', 'padding', side, $event.target.value)"
+                  >
+                  <span>{{ sideLabel(side) }}</span>
+                </label>
+              </div>
             </div>
 
-            <h4 class="evs__group">
-              Column span
-            </h4>
-            <div class="evs__pills">
-              <button
-                v-for="span in columnSpans"
-                :key="span"
-                class="evs__pill evs__pill--narrow"
-                :class="{ 'evs__pill--on': selected.colSpan === span }"
-                @click="$emit('set-col-span', span)"
-              >
-                {{ span }}
-              </button>
+            <div class="evs__control">
+              <h4 class="evs__label">
+                Column span
+              </h4>
+              <div class="evs__seg">
+                <button
+                  v-for="span in columnSpans"
+                  :key="span"
+                  class="evs__pill evs__pill--narrow"
+                  :class="{ 'evs__pill--on': selected.colSpan === span }"
+                  @click="$emit('set-col-span', span)"
+                >
+                  {{ span }}
+                </button>
+              </div>
             </div>
           </template>
         </template>
@@ -499,7 +514,7 @@ export default {
   }
 
   &__title {
-    font-size:     18px;
+    font-size:     16px;
     font-weight:   600;
     margin:        0;
     overflow:      hidden;
@@ -508,42 +523,49 @@ export default {
   }
 
   &__close {
-    background: transparent;
-    border:     none;
-    color:      var(--body-text);
-    cursor:     pointer;
-    font-size:  16px;
-    padding:    4px;
+    background:  transparent;
+    border:      none;
+    color:       var(--muted);
+    cursor:      pointer;
+    font-size:   16px;
+    line-height: 1;
+    min-height:  0;
+    padding:     4px;
 
     &:hover {
       color: var(--link);
     }
   }
 
+  // A 25px strip: 12px labels, 16px apart, the active one underlined ON the strip's own hairline.
   &__tabs {
     border-bottom: 1px solid var(--border);
+    box-sizing:    border-box;
     display:       flex;
     flex:          0 0 auto;
     gap:           16px;
+    height:        25px;
     padding:       0 16px;
   }
 
   // The active tab's underline sits ON the row's own hairline, not under it — otherwise the two
-  // draw as separate lines a few pixels apart.
+  // draw as separate lines a few pixels apart. The active tab darkens rather than bolding: the
+  // underline already carries the state, and reflowing the label on every click does not.
   &__tab {
     background:    transparent;
     border:        none;
     border-bottom: 2px solid transparent;
     color:         var(--link);
     cursor:        pointer;
-    font-size:     14px;
+    font-size:     12px;
+    line-height:   17px;
     margin-bottom: -1px;
-    padding:       0 0 6px;
+    min-height:    0;
+    padding:       0 0 5px;
 
     &--active {
       border-bottom-color: var(--primary);
-      color:               var(--body-text);
-      font-weight:         600;
+      color:               var(--primary);
     }
   }
 
@@ -551,9 +573,20 @@ export default {
     display:        flex;
     flex:           1 1 auto;
     flex-direction: column;
-    gap:            8px;
+    gap:            10px;
     overflow-y:     auto;
     padding:        16px;
+
+    // The Layout tab is a list of controls rather than prose, and the design gives it more air.
+    &--layout {
+      gap: 14px;
+    }
+
+    // A column flex container shrinks its items before it overflows, which silently squashed every
+    // fixed-height control in here (a 32px input rendered at 19px). Nothing in this list shrinks.
+    > * {
+      flex: 0 0 auto;
+    }
   }
 
   &__hint {
@@ -563,10 +596,21 @@ export default {
     margin:      0;
   }
 
+  // A SECTION heading in the Add tab ("Building blocks", "Ready-made", "Advanced").
   &__group {
     font-size:   13px;
     font-weight: 700;
-    margin:      8px 0 0;
+    margin:      0;
+  }
+
+  // The label above one control in the Layout tab. Quieter than a section heading — it names a
+  // setting, it does not open a part of the drawer.
+  &__label {
+    color:         var(--muted);
+    font-size:     12px;
+    font-weight:   700;
+    line-height:   14px;
+    margin:        0 0 6px;
 
     // Colour-keyed to the bands drawn on the canvas: amber = margin, teal = padding.
     &--margin,
@@ -596,8 +640,9 @@ export default {
     background:    var(--accent-btn);
     border-radius: 4px;
     font-size:     14px;
+    line-height:   18px;
     margin:        0;
-    padding:       10px 12px;
+    padding:       8px 10px;
   }
 
   &__field {
@@ -623,23 +668,41 @@ export default {
     gap:            6px;
   }
 
-  // A row of choices where exactly one is on — width, height, spacing, column span.
-  &__pills {
-    display:   flex;
-    flex-wrap: wrap;
-    gap:       4px;
+  // One setting: its label, then the control. The 6px between them comes from the label's own
+  // margin, so it stays independent of the gap BETWEEN settings.
+  &__control {
+    display:        flex;
+    flex-direction: column;
+  }
+
+  // A SEGMENTED CONTROL: one track, the options a pixel apart inside it, exactly one filled. Same
+  // component as the view tabs in the bar, one size down.
+  &__seg {
+    align-items:   center;
+    align-self:    flex-start;
+    background:    var(--default);
+    border-radius: 4px;
+    display:       flex;
+    gap:           1px;
+    max-width:     100%;
+    overflow:      hidden;
   }
 
   &__pill {
     background:    transparent;
-    border:        1px solid transparent;
+    border:        none;
     border-radius: 4px;
     color:         var(--body-text);
     cursor:        pointer;
-    font-size:     14px;
-    padding:       5px 12px;
+    font-size:     12px;
+    // Said explicitly: the shell's global button rule is 40px tall, a segment here is 24.
+    height:        24px;
+    line-height:   24px;
+    min-height:    24px;
+    padding:       0 8px;
+    white-space:   nowrap;
 
-    &:hover {
+    &:hover:not(&--on) {
       background: var(--accent-btn);
     }
 
@@ -649,23 +712,31 @@ export default {
     }
 
     &--narrow {
-      min-width: 36px;
-      padding:   5px 8px;
+      min-width: 24px;
     }
   }
 
+  // Advanced opens a further set of controls, so it is separated by a rule and titled like the
+  // Add tab's section headings.
   &__advanced {
-    align-items: center;
-    background:  transparent;
-    border:      none;
-    color:       var(--body-text);
-    cursor:      pointer;
-    display:     flex;
-    font-size:   14px;
-    font-weight: 600;
-    gap:         6px;
-    margin-top:  8px;
-    padding:     0;
+    align-items:  center;
+    background:   transparent;
+    border:       none;
+    border-top:   1px solid var(--border);
+    color:        var(--body-text);
+    cursor:       pointer;
+    display:      flex;
+    font-size:    13px;
+    font-weight:  700;
+    gap:          8px;
+    line-height:  16px;
+    min-height:   0;
+    padding:      12px 0 0;
+    width:        100%;
+
+    i {
+      font-size: 16px;
+    }
   }
 
   &__sides {
@@ -676,13 +747,14 @@ export default {
     label {
       display:        flex;
       flex-direction: column;
-      gap:            4px;
+      gap:            3px;
     }
 
     span {
-      color:      var(--muted);
-      font-size:  12px;
-      text-align: center;
+      color:       var(--muted);
+      font-size:   12px;
+      line-height: 12px;
+      text-align:  center;
     }
   }
 

@@ -78,7 +78,8 @@ export default {
       selectedNodeId:         null,
       newPanelId:             null, // the view being created, while it has never been saved
       startedFrom:            '', // what a new view was started from, for the bar's "From …"
-      settingsNodeId:         null, // widget whose settings dialog is open
+      settingsNodeId:         null, // widget whose settings panel is open
+      settingsAnchor:         null, // where that widget is on screen, so the panel opens beside it
       lizPreviewId:           null, // Liz's preview widget, on the grid but not yet part of the view
       editingTemplate:        null, // stored template whose CONTENT is open in the split editor
       editingTemplateNewKind: null,
@@ -815,6 +816,7 @@ export default {
       const id = this.settingsNodeId;
 
       this.settingsNodeId = null;
+      this.settingsAnchor = null;
 
       if (!id) {
         return;
@@ -827,6 +829,7 @@ export default {
       const id = this.settingsNodeId;
 
       this.settingsNodeId = null;
+      this.settingsAnchor = null;
       if (id) {
         this.removeNode(id);
       }
@@ -990,8 +993,9 @@ export default {
       v-if="settingsNode && settingsNode.type === 'widget'"
       :key="settingsNode.id"
       :widget="settingsNode.widget"
+      :anchor="settingsAnchor"
       @done="applySettings"
-      @cancel="settingsNodeId = null"
+      @cancel="settingsNodeId = null; settingsAnchor = null"
       @remove="removeConfigured"
     />
   </div>
