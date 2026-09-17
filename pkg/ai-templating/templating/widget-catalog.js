@@ -25,7 +25,13 @@ export const WIDGET_TEXT = 'text';
 export const WIDGET_LINKS = 'links';
 export const WIDGET_BANNER = 'banner';
 export const WIDGET_CLUSTER_TABLE = 'clusterTable';
+// The workload OVERVIEW is deliberately NOT in the catalog below. Its component is Rancher's own
+// useWorkloadDashboard composable, which reads `clusterId`, `namespaceFilters` and `cluster/all` —
+// it only has data INSIDE a cluster. On the Home it renders "No resources found", so it belongs
+// with the other cluster-scoped widgets, behind a cluster picker. The renderer still knows the kind
+// so a stored one keeps working where there IS a cluster.
 export const WIDGET_OVERVIEW = 'overview';
+export const WIDGET_NAV = 'nav';
 
 /** The resource a fresh building block starts on — the one every Rancher install has. */
 const CLUSTER = CAPI.RANCHER_CLUSTER;
@@ -94,17 +100,6 @@ export const BUILDING_BLOCKS = [
     spec: { kind: WIDGET_TIME_SERIES, title: 'Metrics' },
   },
   {
-    id:   WIDGET_OVERVIEW,
-    name: 'Overview',
-    desc: 'Resources broken down by state, type and namespace',
-    icon: 'counters',
-    span: 12,
-    // The Workloads overview from the cluster explorer, pointed at whichever types you pick.
-    spec: {
-      kind: WIDGET_OVERVIEW, title: 'Workloads', resources: ['pod', 'apps.deployment', 'apps.daemonset', 'apps.statefulset']
-    },
-  },
-  {
     id:   WIDGET_TEXT,
     name: 'Text',
     desc: 'Markdown for runbooks and contacts',
@@ -112,6 +107,16 @@ export const BUILDING_BLOCKS = [
     span: 4,
     spec: {
       kind: WIDGET_TEXT, title: 'Text', body: ''
+    },
+  },
+  {
+    id:   WIDGET_NAV,
+    name: 'Navigation',
+    desc: 'Buttons that take you into Rancher',
+    icon: 'nav',
+    span: 4,
+    spec: {
+      kind: WIDGET_NAV, title: 'Go to', links: [{ url: 'clusterManagement' }, { url: 'createCluster' }, { url: 'importCluster' }, { url: 'apps' }]
     },
   },
   {
@@ -184,16 +189,6 @@ export const READY_MADE = [
     span: 4,
     spec: {
       kind: WIDGET_BAR_CHART, title: 'Upgrade status', resource: CLUSTER, groupBy: 'version'
-    },
-  },
-  {
-    id:   'longhorn-volumes',
-    name: 'Longhorn volume health',
-    desc: 'Status summary of Volume',
-    icon: 'status',
-    span: 4,
-    spec: {
-      kind: WIDGET_STATUS_SUMMARY, title: 'Longhorn volume health', resource: LONGHORN.VOLUMES, groupBy: 'state'
     },
   },
   {
@@ -270,5 +265,7 @@ export const SUGGESTED_RESOURCES = [
   { value: EVENT, label: 'Event (v1)' },
   { value: FLEET.GIT_REPO, label: 'GitRepo (fleet.cattle.io)' },
   { value: FLEET.BUNDLE, label: 'Bundle (fleet.cattle.io)' },
+  // Kept as a SUGGESTION rather than a ready-made: Longhorn usually runs on a downstream cluster,
+  // so this only resolves where it is installed on the local one.
   { value: LONGHORN.VOLUMES, label: 'Volume (longhorn.io)' },
 ];

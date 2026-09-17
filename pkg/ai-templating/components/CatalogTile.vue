@@ -189,6 +189,19 @@ export default {
           />
         </template>
 
+        <template v-else-if="entry.icon === 'nav'">
+          <rect
+            v-for="y in [4, 15, 26]"
+            :key="y"
+            class="ctile__strong"
+            x="0"
+            :y="y"
+            width="56"
+            height="10"
+            rx="2"
+          />
+        </template>
+
         <template v-else-if="entry.icon === 'banner'">
           <rect
             class="ctile__strong"

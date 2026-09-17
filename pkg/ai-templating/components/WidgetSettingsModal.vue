@@ -2,8 +2,9 @@
 import { TABLE_COLUMNS, FIELDS } from '../templating/widget-data';
 import {
   SUGGESTED_RESOURCES, blockName, WIDGET_TABLE, WIDGET_LIST, WIDGET_TEXT, WIDGET_LINKS,
-  WIDGET_TIME_SERIES, WIDGET_BANNER, WIDGET_CLUSTER_TABLE
+  WIDGET_TIME_SERIES, WIDGET_BANNER, WIDGET_CLUSTER_TABLE, WIDGET_OVERVIEW, WIDGET_NAV
 } from '../templating/widget-catalog';
+import { NAV_DESTINATIONS } from './widgets/WidgetNav.vue';
 
 // "What this widget shows" — the panel behind a widget's ⚙.
 //
@@ -40,11 +41,12 @@ export default {
   data() {
     return {
       // Measured after mount: the panel can only be placed well if we know how tall it really is.
-      panelHeight: 0,
-      draft:       JSON.parse(JSON.stringify(this.widget)),
-      resources:   SUGGESTED_RESOURCES,
-      columns:     TABLE_COLUMNS,
-      fields:      FIELDS,
+      panelHeight:  0,
+      draft:        JSON.parse(JSON.stringify(this.widget)),
+      resources:    SUGGESTED_RESOURCES,
+      destinations: NAV_DESTINATIONS,
+      columns:      TABLE_COLUMNS,
+      fields:       FIELDS,
     };
   },
 
@@ -87,7 +89,10 @@ export default {
 
     // Which sections apply to this building block.
     readsData() {
-      return ![WIDGET_TEXT, WIDGET_LINKS, WIDGET_TIME_SERIES, WIDGET_BANNER, WIDGET_CLUSTER_TABLE].includes(this.draft.kind);
+      return ![
+        WIDGET_TEXT, WIDGET_LINKS, WIDGET_TIME_SERIES, WIDGET_BANNER,
+        WIDGET_CLUSTER_TABLE, WIDGET_OVERVIEW, WIDGET_NAV
+      ].includes(this.draft.kind);
     },
 
     // The Home cluster table is the stock Home's own table — its columns, sorting and actions are
@@ -118,6 +123,21 @@ export default {
       const known = this.resources.some((r) => r.value === this.draft.resource);
 
       return known || !this.draft.resource ? this.resources : [{ value: this.draft.resource, label: this.draft.resource }, ...this.resources];
+    },
+
+    // An overview summarises several types at once, edited as one type per line.
+    resourcesText: {
+      get() {
+        return (this.draft.resources || []).join('\n');
+      },
+      set(value) {
+        this.draft.resources = `${ value }`.split('\n').map((r) => r.trim()).filter(Boolean);
+      },
+    },
+
+    // Which destinations a navigation widget offers.
+    navSelection() {
+      return (this.draft.links || []).map((l) => l.url);
     },
 
     targetsText: {
@@ -193,6 +213,21 @@ export default {
 
     hasColumn(id) {
       return (this.draft.columns || []).includes(id);
+    },
+
+    // Navigation buttons reuse the links field: a named destination goes in `url`, and its label
+    // comes from the destination itself.
+    toggleDestination(id) {
+      const links = [...(this.draft.links || [])];
+      const at = links.findIndex((l) => l.url === id);
+
+      if (at >= 0) {
+        links.splice(at, 1);
+      } else {
+        links.push({ url: id, label: '' });
+      }
+
+      this.draft.links = links;
     },
   },
 };
@@ -380,6 +415,40 @@ export default {
           />
           <p class="wsm__hint">
             Markdown — headings, **bold**, lists and links all work.
+          </p>
+        </template>
+
+        <template v-if="draft.kind === 'nav'">
+          <label class="wsm__label">Destinations</label>
+          <div class="wsm__columns wsm__columns--wide">
+            <label
+              v-for="dest in destinations"
+              :key="dest.value"
+            >
+              <input
+                type="checkbox"
+                :checked="navSelection.includes(dest.value)"
+                @change="toggleDestination(dest.value)"
+              >
+              {{ dest.label }}
+            </label>
+          </div>
+          <p class="wsm__hint">
+            Each one resolves to the real page, so these keep working when Rancher moves things.
+          </p>
+        </template>
+
+        <template v-if="draft.kind === 'overview'">
+          <label class="wsm__label">Resources</label>
+          <textarea
+            v-model="resourcesText"
+            class="wsm__field wsm__field--area"
+            rows="5"
+            placeholder="pod"
+          />
+          <p class="wsm__hint">
+            One type per line — pod, apps.deployment, batch.job. They are summarised together by
+            state, by type and by namespace.
           </p>
         </template>
 
@@ -593,6 +662,11 @@ export default {
     display:               grid;
     gap:                   4px 12px;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+
+    // Destination names are sentences, not single words.
+    &--wide {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 
     label {
       align-items: center;

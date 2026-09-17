@@ -153,6 +153,29 @@ function podsOf(row) {
   return Number.isFinite(pods) && pods > 0 ? `${ pods }` : '';
 }
 
+// ---- where a resource lives ---------------------------------------------------------------------
+
+/**
+ * Which store to read a type from.
+ *
+ * NOT `currentStore`: that answers "where does this type live when you are INSIDE a cluster", and
+ * sends anything cluster-scoped — a Fleet GitRepo, a Longhorn Volume, an Event — to the `cluster`
+ * store. The Home is not inside a cluster, so that store is empty here, and a widget asking it
+ * reports the type as missing when it is installed and readable all along.
+ *
+ * The Home reads the local cluster through MANAGEMENT (Steve /v1), so prefer whichever store
+ * actually has a schema for the type, management first.
+ */
+export function storeForType(getters, type) {
+  if (!type) {
+    return 'management';
+  }
+
+  const stores = ['management', getters['currentStore'](type), 'cluster'];
+
+  return stores.find((store) => store && getters[`${ store }/schemaFor`]?.(type)) || 'management';
+}
+
 // ---- reading a field ----------------------------------------------------------------------------
 
 /**

@@ -8,7 +8,7 @@
 // Cluster scoping is a server-side concept we can only approximate from the Home (which is not
 // inside a cluster), so a custom `targets` list matches on the row's cluster or namespace name.
 
-import { applyFilter, applySort, fieldValue } from '../../templating/widget-data';
+import { applyFilter, applySort, fieldValue, storeForType } from '../../templating/widget-data';
 
 export default {
   props: {
@@ -29,25 +29,8 @@ export default {
   },
 
   computed: {
-    /**
-     * Which store to read the resource from.
-     *
-     * NOT `currentStore`: that answers "where does this type live when you are inside a cluster",
-     * and sends anything cluster-scoped — a Fleet GitRepo, a Longhorn Volume, an Event — to the
-     * `cluster` store. The Home is not inside a cluster, so that store is empty here and the widget
-     * reported the type as missing when it was installed and readable all along.
-     *
-     * The Home reads the local cluster through MANAGEMENT (Steve /v1), so prefer whichever store
-     * actually has a schema for the type, management first.
-     */
     inStore() {
-      if (!this.widget.resource) {
-        return 'management';
-      }
-
-      const stores = ['management', this.$store.getters['currentStore'](this.widget.resource), 'cluster'];
-
-      return stores.find((store) => store && this.$store.getters[`${ store }/schemaFor`]?.(this.widget.resource)) || 'management';
+      return storeForType(this.$store.getters, this.widget.resource);
     },
 
     schema() {

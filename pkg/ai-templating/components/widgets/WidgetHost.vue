@@ -1,7 +1,7 @@
 <script>
 import {
   WIDGET_TABLE, WIDGET_COUNTERS, WIDGET_STATUS_SUMMARY, WIDGET_LIST, WIDGET_BAR_CHART,
-  WIDGET_TIME_SERIES, WIDGET_TEXT, WIDGET_LINKS, WIDGET_BANNER, WIDGET_CLUSTER_TABLE, WIDGET_OVERVIEW
+  WIDGET_TIME_SERIES, WIDGET_TEXT, WIDGET_LINKS, WIDGET_BANNER, WIDGET_CLUSTER_TABLE, WIDGET_OVERVIEW, WIDGET_NAV
 } from '../../templating/widget-catalog';
 import WidgetTable from './WidgetTable.vue';
 import WidgetCounters from './WidgetCounters.vue';
@@ -14,6 +14,7 @@ import WidgetLinks from './WidgetLinks.vue';
 import WidgetBanner from './WidgetBanner.vue';
 import WidgetClusterTable from './WidgetClusterTable.vue';
 import WidgetOverview from './WidgetOverview.vue';
+import WidgetNav from './WidgetNav.vue';
 
 // Renders ONE widget spec as whichever building block it names. The only place that maps a `kind`
 // onto a component, so adding a building block means adding it to the catalog and to this map.
@@ -29,6 +30,7 @@ const RENDERERS = {
   [WIDGET_BANNER]:         'WidgetBanner',
   [WIDGET_CLUSTER_TABLE]:  'WidgetClusterTable',
   [WIDGET_OVERVIEW]:       'WidgetOverview',
+  [WIDGET_NAV]:            'WidgetNav',
 };
 
 export default {
@@ -44,7 +46,8 @@ export default {
     WidgetLinks,
     WidgetBanner,
     WidgetClusterTable,
-    WidgetOverview
+    WidgetOverview,
+    WidgetNav
   },
 
   props: {

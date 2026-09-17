@@ -1,27 +1,31 @@
 <script>
-import ResourceTable from '@shell/components/ResourceTable.vue';
+import PaginatedResourceTable from '@shell/components/PaginatedResourceTable.vue';
 import { STATE, NAME, NAMESPACE, AGE } from '@shell/config/table-headers';
 import WidgetCard from './WidgetCard.vue';
-import rows from './rows-mixin';
-import { fieldLabel } from '../../templating/widget-data';
+import {
+  applyFilter, applySort, fieldValue, fieldLabel, storeForType
+} from '../../templating/widget-data';
 
 // TABLE — "Rows of a resource with the columns you pick".
 //
-// Rendered by Rancher's own ResourceTable, so a table here behaves like every other table in the
-// product: the real state badges, the real name links, sorting, paging, the same empty state. It is
-// handed a schema and rows and told not to offer bulk actions or row menus, because a widget on a
-// Home is for reading.
+// Rendered by Rancher's PaginatedResourceTable, which is the component built for exactly this:
+// "ResourceList like capabilities outside of List pages", its own words — the resource fetch,
+// SERVER-SIDE pagination where the backend supports it, and the plumbing that goes with them. So
+// this widget does not fetch at all; it says what to show and hands the rest over.
 //
-// The columns a person ticks are mapped onto Rancher's REAL header definitions where one exists
-// (State, Name, Namespace, Created) so those columns get their proper formatters; the rest become
-// plain value columns driven by this extension's own field readers.
+// That is why the widget's own Where/Filter/Sort arrive as `localFilter`: the table owns the rows,
+// and a filter is something applied to them on the way past, not a reason to fetch them ourselves.
+//
+// Columns map onto Rancher's REAL header definitions where one exists (State, Name, Namespace,
+// Created) so those get their proper formatters; the rest become value columns on this extension's
+// field readers, which is what keeps a CRD field working.
 const { formatter, ...NAME_NO_LINK } = NAME;
 
 const REAL_HEADERS = {
   state:     STATE,
   // Rancher's NAME column links into the resource's detail page, which needs a cluster context the
   // Home does not have — the link silently renders nothing. The stock Home's own cluster table
-  // drops the same formatter for the same reason, so this keeps the header and drops the link.
+  // drops the same formatter for the same reason.
   name:      NAME_NO_LINK,
   namespace: NAMESPACE,
   created:   AGE,
@@ -29,26 +33,37 @@ const REAL_HEADERS = {
 
 export default {
   name:       'WidgetTable',
-  components: { ResourceTable, WidgetCard },
-  mixins:     [rows],
+  components: { PaginatedResourceTable, WidgetCard },
+
+  props: {
+    widget: {
+      type:     Object,
+      required: true,
+    },
+  },
 
   computed: {
+    inStore() {
+      return storeForType(this.$store.getters, this.widget.resource);
+    },
+
+    schema() {
+      return this.widget.resource ? this.$store.getters[`${ this.inStore }/schemaFor`](this.widget.resource) : null;
+    },
+
     headers() {
       const ids = this.widget.columns?.length ? this.widget.columns : ['state', 'name'];
 
       return ids.map((id) => REAL_HEADERS[id] || {
         name:   id,
         label:  fieldLabel(id),
-        // The extension's own readers understand the friendly field names ("provider", "K8s
-        // version") and fall through to a dotted path for anything else, including CRD fields.
         value:  (row) => this.cell(row, id),
         sort:   false,
         search: false,
       });
     },
 
-    // ResourceTable paginates for us; a widget on a Home wants a short table, so the spec's limit
-    // becomes the page size rather than a hard cut.
+    // The table pages for us, so the spec's limit is a page size rather than a hard cut.
     perPage() {
       return this.widget.limit || 10;
     },
@@ -56,9 +71,23 @@ export default {
 
   methods: {
     cell(row, id) {
-      const value = this.fieldValue(row, id);
+      const value = fieldValue(row, id);
 
       return value === '' || value === null || value === undefined ? '—' : value;
+    },
+
+    // Applied to whichever rows the table has, however it got them.
+    filterRows(rows) {
+      const scoped = this.widget.where === 'custom' && this.widget.targets?.length ? (rows || []).filter((row) => this.inTargets(row)) : rows;
+
+      return applySort(applyFilter(scoped, this.widget.filter), this.widget.sortBy, this.widget.sortDir);
+    },
+
+    inTargets(row) {
+      const targets = this.widget.targets.map((t) => t.toLowerCase());
+      const candidates = [fieldValue(row, 'namespace'), row.clusterName, row.spec?.clusterName].filter(Boolean);
+
+      return candidates.some((c) => targets.includes(`${ c }`.toLowerCase()));
     },
   },
 };
@@ -67,18 +96,15 @@ export default {
 <template>
   <WidgetCard
     :title="widget.title"
-    :count="loading || error ? null : rows.length"
-    :loading="loading"
-    :error="error"
-    :empty="!loading && !error && !rows.length"
-    :empty-text="emptyText"
+    :error="schema ? '' : `Rancher has no &quot;${ widget.resource }&quot; here — the type may not be installed, or you may not have permission to see it.`"
   >
-    <ResourceTable
+    <PaginatedResourceTable
       v-if="schema"
       :schema="schema"
-      :rows="rows"
       :headers="headers"
-      :loading="loading"
+      :pagination-headers="headers"
+      :override-in-store="inStore"
+      :local-filter="filterRows"
       :table-actions="false"
       :row-actions="false"
       :namespaced="false"
@@ -91,7 +117,7 @@ export default {
 </template>
 
 <style lang="scss" scoped>
-// ResourceTable brings its own top margin for the toolbar it is not showing here.
+// The table brings its own top margin for the toolbar it is not showing here.
 .wcard :deep(.sortable-table-header) {
   margin-bottom: 0;
 }
