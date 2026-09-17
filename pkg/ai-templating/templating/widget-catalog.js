@@ -25,6 +25,7 @@ export const WIDGET_TEXT = 'text';
 export const WIDGET_LINKS = 'links';
 export const WIDGET_BANNER = 'banner';
 export const WIDGET_CLUSTER_TABLE = 'clusterTable';
+export const WIDGET_OVERVIEW = 'overview';
 
 /** The resource a fresh building block starts on — the one every Rancher install has. */
 const CLUSTER = CAPI.RANCHER_CLUSTER;
@@ -91,6 +92,17 @@ export const BUILDING_BLOCKS = [
     icon: 'timeseries',
     span: 6,
     spec: { kind: WIDGET_TIME_SERIES, title: 'Metrics' },
+  },
+  {
+    id:   WIDGET_OVERVIEW,
+    name: 'Overview',
+    desc: 'Resources broken down by state, type and namespace',
+    icon: 'counters',
+    span: 12,
+    // The Workloads overview from the cluster explorer, pointed at whichever types you pick.
+    spec: {
+      kind: WIDGET_OVERVIEW, title: 'Workloads', resources: ['pod', 'apps.deployment', 'apps.daemonset', 'apps.statefulset']
+    },
   },
   {
     id:   WIDGET_TEXT,

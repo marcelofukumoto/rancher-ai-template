@@ -1,7 +1,7 @@
 <script>
 import TemplateCode from './TemplateCode.vue';
 import TemplateResourceList from './TemplateResourceList.vue';
-import TemplateOverview from './TemplateOverview.vue';
+import TemplateOverview from './widgets/WidgetOverview.vue';
 import WidgetBanner from './widgets/WidgetBanner.vue';
 import WidgetLinks from './widgets/WidgetLinks.vue';
 import WidgetClusterTable from './widgets/WidgetClusterTable.vue';

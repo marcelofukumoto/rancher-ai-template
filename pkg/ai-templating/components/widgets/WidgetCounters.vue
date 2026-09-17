@@ -1,5 +1,5 @@
 <script>
-import CountBox from '@shell/components/CountBox.vue';
+import ResourceSummary from '@shell/components/ResourceSummary.vue';
 import { colorForState } from '@shell/plugins/dashboard-store/resource-class';
 import { ucFirst } from '@shell/utils/string';
 import WidgetCard from './WidgetCard.vue';
@@ -8,18 +8,16 @@ import { groupRows } from '../../templating/widget-data';
 
 // COUNTERS — "Numbers with labels, such as clusters by state".
 //
-// Each number is Rancher's own CountBox, so a count here is the same tile the product uses on its
-// cluster dashboard — same type scale, same colour treatment. The first is always the TOTAL,
-// because "42 clusters" is the number people look for first; the rest are the groups.
+// Each number is Rancher's own ResourceSummary: the count card from the cluster dashboard, which is
+// a SimpleBox with the number, its name, and amber/red chips when some of what it counts is
+// unhealthy. It is fed `spoofedCounts` rather than left to count for itself, so it reports exactly
+// what this widget's resource and filter selected.
 //
-// A group's colour comes from `colorForState`, so "Error" is red and "Active" is green without this
-// widget deciding what those words mean.
-//
-// NOT `compact`: that lays the label beside the number, and a state name of any length
-// ("Reconciling", "Provisioning") then runs out of its tile. Stacked is also what the design draws.
+// The FIRST card is the total, and it is the one that carries the chips — "42 clusters, 3 of them
+// in trouble" is the shape of the question people actually ask. The rest are the groups.
 export default {
   name:       'WidgetCounters',
-  components: { CountBox, WidgetCard },
+  components: { ResourceSummary, WidgetCard },
   mixins:     [rows],
 
   computed: {
@@ -30,9 +28,29 @@ export default {
       return label.endsWith('s') ? label : `${ label }s`;
     },
 
+    // How many of the rows are in a warning or an error state, by Rancher's own reckoning.
+    health() {
+      return this.rows.reduce((acc, row) => {
+        const color = colorForState(row.stateDisplay || row.state || '');
+
+        if (color === 'text-error') {
+          acc.errorCount += 1;
+        } else if (color === 'text-warning') {
+          acc.warningCount += 1;
+        }
+
+        return acc;
+      }, { warningCount: 0, errorCount: 0 });
+    },
+
     counters() {
       const total = {
-        key: '__total', label: this.totalLabel, count: this.rows.length, color: null
+        key:          '__total',
+        name:         this.totalLabel,
+        total:        this.rows.length,
+        useful:       this.rows.length - this.health.warningCount - this.health.errorCount,
+        warningCount: this.health.warningCount,
+        errorCount:   this.health.errorCount,
       };
 
       if (!this.widget.groupBy) {
@@ -40,11 +58,13 @@ export default {
       }
 
       const groups = groupRows(this.rows, this.widget.groupBy).map((g) => ({
-        key:   g.label,
-        label: ucFirst(g.label),
-        count: g.count,
-        // CountBox takes a CSS variable NAME; Rancher's state classes map onto the same words.
-        color: `--${ colorForState(g.label).replace(/^text-/, '') }`,
+        key:          g.label,
+        name:         ucFirst(g.label),
+        total:        g.count,
+        useful:       g.count,
+        // A group IS one state, so its own chip would just repeat its number.
+        warningCount: 0,
+        errorCount:   0,
       }));
 
       return [total, ...groups];
@@ -60,12 +80,10 @@ export default {
     :error="error"
   >
     <div class="wcounters">
-      <CountBox
+      <ResourceSummary
         v-for="counter in counters"
         :key="counter.key"
-        :name="counter.label"
-        :count="counter.count"
-        :primary-color-var="counter.color || '--primary'"
+        :spoofed-counts="counter"
       />
     </div>
   </WidgetCard>
@@ -75,6 +93,19 @@ export default {
 .wcounters {
   display:               grid;
   gap:                   12px;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  // ResourceSummary lays its number, name and chips out in ONE row (the cluster dashboard gives it
+  // a third of a full-width page). Below about 200px those collide, so that is the floor: a narrow
+  // widget stacks the cards, a wide one puts several across.
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+
+  :deep(.container) {
+    height:    100%;
+    margin:    0;
+    min-width: 0;
+  }
+
+  :deep(h1) {
+    margin-bottom: 0;
+  }
 }
 </style>

@@ -232,6 +232,7 @@ export function spacingPresetOf(padding) {
  *   source      'home' — Rancher's own links | 'custom' — the `links` below (links widget)
  *   links       [{ label, url }] (links widget)
  *   url         Grafana panel URL (time series widget)
+ *   resources   the resource types an overview summarises
  */
 export function normalizeWidget(widget) {
   const w = widget && typeof widget === 'object' ? widget : {};
@@ -239,21 +240,23 @@ export function normalizeWidget(widget) {
   const arr = (v) => (Array.isArray(v) ? v : []);
 
   const out = {
-    kind:     str(w.kind, 'text'),
-    title:    str(w.title),
-    resource: str(w.resource),
-    where:    w.where === 'custom' ? 'custom' : 'view',
-    source:   w.source === 'custom' ? 'custom' : 'home',
-    targets:  arr(w.targets).filter((t) => typeof t === 'string'),
-    filter:   str(w.filter),
-    columns:  arr(w.columns).filter((c) => typeof c === 'string'),
-    sortBy:   str(w.sortBy),
-    sortDir:  w.sortDir === 'desc' ? 'desc' : 'asc',
-    groupBy:  str(w.groupBy),
-    limit:    Number.isFinite(Number(w.limit)) && Number(w.limit) > 0 ? Math.round(Number(w.limit)) : 0,
-    body:     str(w.body),
-    links:    arr(w.links).filter((l) => l && typeof l === 'object').map((l) => ({ label: str(l.label), url: str(l.url) })),
-    url:      str(w.url),
+    kind:      str(w.kind, 'text'),
+    title:     str(w.title),
+    resource:  str(w.resource),
+    where:     w.where === 'custom' ? 'custom' : 'view',
+    source:    w.source === 'custom' ? 'custom' : 'home',
+    targets:   arr(w.targets).filter((t) => typeof t === 'string'),
+    filter:    str(w.filter),
+    columns:   arr(w.columns).filter((c) => typeof c === 'string'),
+    sortBy:    str(w.sortBy),
+    sortDir:   w.sortDir === 'desc' ? 'desc' : 'asc',
+    groupBy:   str(w.groupBy),
+    limit:     Number.isFinite(Number(w.limit)) && Number(w.limit) > 0 ? Math.round(Number(w.limit)) : 0,
+    body:      str(w.body),
+    links:     arr(w.links).filter((l) => l && typeof l === 'object').map((l) => ({ label: str(l.label), url: str(l.url) })),
+    url:       str(w.url),
+    // An overview summarises several types at once, so it keeps a list rather than one `resource`.
+    resources: arr(w.resources).filter((r) => typeof r === 'string'),
   };
 
   // `subtitle` and `image` are banner-only extras; keep them only when set so stored specs stay small.

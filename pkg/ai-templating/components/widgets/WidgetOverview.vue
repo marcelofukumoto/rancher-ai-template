@@ -7,18 +7,16 @@ import ByStateSection from '@shell/pages/c/_cluster/explorer/workload-dashboard/
 import ByTypeSection from '@shell/pages/c/_cluster/explorer/workload-dashboard/ByTypeSection.vue';
 import ByNamespaceSection from '@shell/pages/c/_cluster/explorer/workload-dashboard/ByNamespaceSection.vue';
 
-// Config-driven "overview" widget — the Workloads overview, generalized to any set of
-// resource types. It reuses the exact composable + By State / By Type / By Namespace
-// sections that power /explorer/workload-dashboard; only the type list is swapped for
-// the widget's `resources`. redirectOnInvalid:false keeps it isolated from the
-// Workloads-dashboard's "bad data -> redirect to deployments" behavior.
+// OVERVIEW — the Workloads overview, generalized to any set of resource types.
+//
+// It reuses the EXACT composable and the By State / By Type / By Namespace sections that power
+// /explorer/workload-dashboard; only the type list is swapped for the widget's own. So an overview
+// on the Home is the same overview people already know, not a reimplementation of it.
+// redirectOnInvalid:false keeps it isolated from the Workloads dashboard's "bad data -> redirect to
+// deployments" behaviour, which would be hostile on a Home.
 //
 // Widget spec:
-//   {
-//     type:      'overview',
-//     title:     'Workloads',
-//     resources: ['pod', 'apps.deployment', { resource: 'batch.job' }]
-//   }
+//   { kind: 'overview', title: 'Workloads', resources: ['pod', 'apps.deployment', 'batch.job'] }
 interface OverviewWidget {
   title?: string;
   resources?: (string | { resource: string })[];
