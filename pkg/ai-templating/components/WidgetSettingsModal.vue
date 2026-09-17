@@ -1,5 +1,5 @@
 <script>
-import { TABLE_COLUMNS, FIELDS } from '../templating/widget-data';
+import { TABLE_COLUMNS, FIELDS, typeColumns } from '../templating/widget-data';
 import {
   SUGGESTED_RESOURCES, blockName, WIDGET_TABLE, WIDGET_LIST, WIDGET_TEXT, WIDGET_LINKS,
   WIDGET_TIME_SERIES, WIDGET_BANNER, WIDGET_CLUSTER_TABLE, WIDGET_OVERVIEW, WIDGET_NAV
@@ -45,7 +45,6 @@ export default {
       draft:        JSON.parse(JSON.stringify(this.widget)),
       resources:    SUGGESTED_RESOURCES,
       destinations: NAV_DESTINATIONS,
-      columns:      TABLE_COLUMNS,
       fields:       FIELDS,
     };
   },
@@ -103,6 +102,33 @@ export default {
 
     hasColumns() {
       return this.draft.kind === WIDGET_TABLE;
+    },
+
+    /**
+     * The columns on offer belong to the RESOURCE, not to this panel: a User has a username and a
+     * last login, a Cluster has a provider and a Kubernetes version. So the ticks are rebuilt from
+     * whatever type the picker is currently pointing at, and only a type Rancher describes nothing
+     * about falls back to the generic field list.
+     */
+    columns() {
+      const own = typeColumns(this.$store.getters, this.draft.resource);
+
+      return own.length ? own : TABLE_COLUMNS.map((c) => ({ ...c, sortable: true }));
+    },
+
+    /**
+     * And so do the fields you can sort from. A table sorts through the column itself, so it can
+     * only offer the ones the type says are sortable; a list sorts through this extension's own
+     * field readers, which is the generic list.
+     */
+    sortFields() {
+      if (this.draft.kind !== WIDGET_TABLE) {
+        return FIELDS;
+      }
+
+      const sortable = this.columns.filter((c) => c.sortable);
+
+      return sortable.length ? sortable : FIELDS;
     },
 
     hasSort() {
@@ -193,6 +219,29 @@ export default {
     window.removeEventListener('keydown', this.onKey);
     window.removeEventListener('resize', this.measure);
     document.removeEventListener('mousedown', this.onOutside);
+  },
+
+  watch: {
+    /**
+     * Changing the type changes what a column even means, so the old ticks and the old sort cannot
+     * simply be carried over: `user-id` is not a column a Cluster has. Whatever still exists on the
+     * new type is kept — State and Name usually survive — and anything that does not is dropped,
+     * falling back to the first few columns so the table is never left with none.
+     */
+    'draft.resource'(neu, old) {
+      if (neu === old) {
+        return;
+      }
+
+      const ids = this.columns.map((c) => c.id);
+      const kept = (this.draft.columns || []).filter((id) => ids.includes(id));
+
+      this.draft.columns = kept.length ? kept : ids.slice(0, 4);
+
+      if (this.draft.sortBy && !this.sortFields.some((f) => f.id === this.draft.sortBy)) {
+        this.draft.sortBy = '';
+      }
+    },
   },
 
   methods: {
@@ -372,7 +421,7 @@ export default {
                 Nothing
               </option>
               <option
-                v-for="field in fields"
+                v-for="field in sortFields"
                 :key="field.id"
                 :value="field.id"
               >

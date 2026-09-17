@@ -176,6 +176,56 @@ export function storeForType(getters, type) {
   return stores.find((store) => store && getters[`${ store }/schemaFor`]?.(type)) || 'management';
 }
 
+// ---- a type's own columns -----------------------------------------------------------------------
+
+/**
+ * The columns Rancher itself defines for a type, via its type-map.
+ *
+ * This matters because the columns worth showing are a property of the RESOURCE, not of this
+ * extension: a Cluster has a provider and a Kubernetes version, a User has a username and a last
+ * login, and a CRD has whatever its own list page declares. A fixed list of generic fields can only
+ * ever be wrong for most types.
+ *
+ * Returns `{ id, label, sortable, header }` per column, where `header` is Rancher's real header
+ * definition — pass it to a table verbatim and the column gets its proper formatter and value.
+ */
+export function typeColumns(getters, resource) {
+  if (!resource) {
+    return [];
+  }
+
+  const schema = getters[`${ storeForType(getters, resource) }/schemaFor`]?.(resource);
+
+  if (!schema) {
+    return [];
+  }
+
+  const headers = getters['type-map/headersFor']?.(schema) || [];
+
+  return headers.map((header) => ({
+    id:       header.name,
+    label:    header.labelKey ? getters['i18n/t'](header.labelKey) : (header.label || header.name),
+    sortable: !!header.sort,
+    header,
+  }));
+}
+
+/**
+ * Rancher's header, minus the link into the resource's detail page.
+ *
+ * That link needs a cluster context the Home does not have, and without one it renders an empty
+ * cell — the stock Home's own cluster table drops the same formatter for the same reason.
+ */
+export function withoutDetailLink(header) {
+  if (header?.formatter !== 'LinkDetail') {
+    return header;
+  }
+
+  const { formatter, ...rest } = header;
+
+  return rest;
+}
+
 // ---- reading a field ----------------------------------------------------------------------------
 
 /**

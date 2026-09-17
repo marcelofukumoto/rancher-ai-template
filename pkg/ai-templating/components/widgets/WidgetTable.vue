@@ -3,7 +3,7 @@ import PaginatedResourceTable from '@shell/components/PaginatedResourceTable.vue
 import { STATE, NAME, NAMESPACE, AGE } from '@shell/config/table-headers';
 import WidgetCard from './WidgetCard.vue';
 import {
-  applyFilter, applySort, fieldValue, fieldLabel, storeForType
+  applyFilter, applySort, fieldValue, fieldLabel, storeForType, typeColumns, withoutDetailLink
 } from '../../templating/widget-data';
 
 // TABLE — "Rows of a resource with the columns you pick".
@@ -16,16 +16,24 @@ import {
 // That is why the widget's own Where/Filter/Sort arrive as `localFilter`: the table owns the rows,
 // and a filter is something applied to them on the way past, not a reason to fetch them ourselves.
 //
-// Columns map onto Rancher's REAL header definitions where one exists (State, Name, Namespace,
-// Created) so those get their proper formatters; the rest become value columns on this extension's
-// field readers, which is what keeps a CRD field working.
+// It is KEYED on the resource. The table fetches for the schema it was built with and does not
+// re-fetch when that prop changes, so pointing a widget at a different type left the old type's
+// rows on screen until a reload. Keying it makes a new resource a new table. The sort is in the key
+// for the same reason: a column's default sort is read once, when the table is built.
+//
+// Columns come from the RESOURCE first: Rancher defines real headers per type, so a User gets a
+// username and a last login while a Cluster gets a provider and a Kubernetes version, each with its
+// proper formatter and sort. Only where the type declares nothing does this fall back to a generic
+// header, and then to a value column on this extension's own field readers — which is what keeps an
+// arbitrary CRD field working.
+//
+// Rancher's NAME column links into the resource's detail page, which needs a cluster context the
+// Home does not have; the link silently renders nothing. The stock Home's own cluster table drops
+// the same formatter for the same reason (see withoutDetailLink for the type's own headers).
 const { formatter, ...NAME_NO_LINK } = NAME;
 
-const REAL_HEADERS = {
+const GENERIC_HEADERS = {
   state:     STATE,
-  // Rancher's NAME column links into the resource's detail page, which needs a cluster context the
-  // Home does not have — the link silently renders nothing. The stock Home's own cluster table
-  // drops the same formatter for the same reason.
   name:      NAME_NO_LINK,
   namespace: NAMESPACE,
   created:   AGE,
@@ -51,16 +59,33 @@ export default {
       return this.widget.resource ? this.$store.getters[`${ this.inStore }/schemaFor`](this.widget.resource) : null;
     },
 
+    // What the type itself declares, keyed by column id.
+    typeHeaders() {
+      return Object.fromEntries(typeColumns(this.$store.getters, this.widget.resource).map((c) => [c.id, c.header]));
+    },
+
     headers() {
       const ids = this.widget.columns?.length ? this.widget.columns : ['state', 'name'];
 
-      return ids.map((id) => REAL_HEADERS[id] || {
-        name:   id,
-        label:  fieldLabel(id),
-        value:  (row) => this.cell(row, id),
-        sort:   false,
-        search: false,
+      return ids.map((id) => {
+        const header = this.headerFor(id);
+
+        // Sorting goes through the COLUMN wherever the column can do it: the header knows which
+        // path it really sorts on, which a field reader never taught this type cannot. Marking the
+        // header is how SortableTable is told to open that way — it has no prop for the direction.
+        if (id === this.widget.sortBy && header.sort) {
+          return {
+            ...header, defaultSort: true, defaultSortDescending: this.widget.sortDir === 'desc'
+          };
+        }
+
+        return header;
       });
+    },
+
+    // True when the table is sorting for us, and this widget must not sort on top of it.
+    sortsItself() {
+      return this.headers.some((h) => h.defaultSort);
     },
 
     // The table pages for us, so the spec's limit is a page size rather than a hard cut.
@@ -70,6 +95,22 @@ export default {
   },
 
   methods: {
+    headerFor(id) {
+      const own = this.typeHeaders[id];
+
+      if (own) {
+        return withoutDetailLink(own);
+      }
+
+      return GENERIC_HEADERS[id] || {
+        name:   id,
+        label:  fieldLabel(id),
+        value:  (row) => this.cell(row, id),
+        sort:   false,
+        search: false,
+      };
+    },
+
     cell(row, id) {
       const value = fieldValue(row, id);
 
@@ -79,8 +120,9 @@ export default {
     // Applied to whichever rows the table has, however it got them.
     filterRows(rows) {
       const scoped = this.widget.where === 'custom' && this.widget.targets?.length ? (rows || []).filter((row) => this.inTargets(row)) : rows;
+      const filtered = applyFilter(scoped, this.widget.filter);
 
-      return applySort(applyFilter(scoped, this.widget.filter), this.widget.sortBy, this.widget.sortDir);
+      return this.sortsItself ? filtered : applySort(filtered, this.widget.sortBy, this.widget.sortDir);
     },
 
     inTargets(row) {
@@ -100,6 +142,7 @@ export default {
   >
     <PaginatedResourceTable
       v-if="schema"
+      :key="`${ widget.resource }|${ widget.sortBy }|${ widget.sortDir }`"
       :schema="schema"
       :headers="headers"
       :pagination-headers="headers"
