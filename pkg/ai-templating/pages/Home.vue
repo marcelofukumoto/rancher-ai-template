@@ -1,15 +1,15 @@
 <script>
 import StockHome from '@shell/pages/home.vue';
-import OrganizerNode from '../components/OrganizerNode.vue';
+import WidgetGrid from '../components/WidgetGrid.vue';
 import HomeTemplateEditor from '../components/HomeTemplateEditor.vue';
 import HomeViewBar from '../components/HomeViewBar.vue';
 import EditViewSidebar from '../components/EditViewSidebar.vue';
 import WidgetSettingsModal from '../components/WidgetSettingsModal.vue';
 import { isTemplatingEnabled, appliedViewScopes, saveView, fetchTemplatingConfigMaps } from '../templating/template-engine';
 import {
-  DEFAULT_GAP, GRID_COLUMNS, isLeaf, newId, newPanel, newWidgetNode, isStockPanel,
-  findNode, addChild, insertNode, removeNode, moveNode, moveNodeTo, updateNode,
-  setColSpan, tidyRoot, heightForPreset, newRootOrganizer, ensureTrailingEmpty, SPACING_PRESETS
+  DEFAULT_GAP, newId, newPanel, newWidgetNode, isStockPanel, findWidget,
+  insertWidget, removeWidget, moveWidget, moveWidgetTo, updateWidget,
+  setColSpan, heightForPreset, SPACING_PRESETS
 } from '../templating/view-model';
 
 // The Home.
@@ -18,8 +18,8 @@ import {
 //              bar at the top, and each is edited, renamed, duplicated and deleted on its own.
 //   WIDGET     one building block on a view's grid (a table, counters, a bar chart, …), sized in
 //              twelfths and configured in place through its ⚙.
-//   ROW        structure, not something you configure: widgets wrap onto rows, and a row is only
-//              visible while editing as the dashed area you drop into.
+//
+// A view is a FLAT, ordered list of widgets that wrap onto lines — there are no rows to manage.
 //
 // WHERE VIEWS LIVE. Your views are saved to YOUR account; the views an admin publishes live in the
 // organization's scope and appear in the same bar. Editing one of those does not change what
@@ -31,18 +31,19 @@ import {
 export default {
   name:       'AiTemplatingHome',
   components: {
-    StockHome, OrganizerNode, HomeTemplateEditor, HomeViewBar, EditViewSidebar, WidgetSettingsModal
+    StockHome, WidgetGrid, HomeTemplateEditor, HomeViewBar, EditViewSidebar, WidgetSettingsModal
   },
 
-  // Action callbacks for the recursive OrganizerNode tree (so it never has to re-emit at each
-  // level). Arrows keep `this` bound to this component.
+  // Action callbacks for the grid and its widgets, so neither has to re-emit up a chain.
+  // Arrows keep `this` bound to this component.
   provide() {
     return {
       viewEditor: {
         select:    (id) => this.selectNode(id),
-        move:      (id, delta) => this.moveNode(id, delta),
+        move:      (id, delta) => this.moveWidget(id, delta),
         remove:    (id) => this.removeNode(id),
-        configure: (id) => {
+        configure: (id, anchor) => {
+          this.settingsAnchor = anchor || null;
           this.settingsNodeId = id;
         },
         editTemplate: (name) => this.openTemplateEditor(name),
@@ -52,13 +53,10 @@ export default {
         endDrag: () => {
           this.ui.dragId = null;
         },
-        dropInto:   (parentId, index) => this.dropInto(parentId, index),
+        dropAt:     (index) => this.dropAt(index),
         setColSpan: (id, span) => this.setColSpan(id, span),
-        setHover:   (id) => {
-          this.ui.hoverId = id;
-        },
-        // The same reactive object the tree reads for drag/hover state.
-        ui: this.ui,
+        // The same reactive object the grid and its widgets read for drag state.
+        ui:         this.ui,
       },
     };
   },
@@ -86,10 +84,10 @@ export default {
       editingTemplateNewName: '',
       saving:                 false,
       error:                  '',
-      // Shared, reactive editor UI state: what is being dragged (an existing node, or a catalog
-      // entry on its way in), and the innermost node under the pointer.
+      // Shared, reactive editor UI state: what is being dragged — a widget already on the grid, or
+      // a catalog entry on its way in.
       ui:                     {
-        dragId: null, hoverId: null, dragEntry: null, dragLabel: '', showBoxModel: false
+        dragId: null, dragEntry: null, dragLabel: '', showBoxModel: false
       },
     };
   },
@@ -172,8 +170,9 @@ export default {
       return isStockPanel(this.activeView);
     },
 
-    rootOrganizer() {
-      return this.activeView?.organizer || null;
+    // The active view's widgets, in order. A flat list — they wrap onto lines by themselves.
+    widgets() {
+      return this.activeView?.widgets || [];
     },
 
     gap() {
@@ -181,7 +180,7 @@ export default {
     },
 
     hasContent() {
-      return this.activeIsStock || !!this.rootOrganizer?.children?.some((child) => child.children?.length || isLeaf(child));
+      return this.activeIsStock || this.widgets.length > 0;
     },
 
     // True when the draft differs from the last saved state.
@@ -189,15 +188,13 @@ export default {
       return this.editing && this.savedBaseline !== null && JSON.stringify(this.working) !== this.savedBaseline;
     },
 
-    // The node the Layout tab acts on — never a row, which has nothing to lay out.
+    // The widget the Layout tab acts on.
     selectedNode() {
-      const node = this.rootOrganizer ? findNode(this.rootOrganizer, this.selectedNodeId) : null;
-
-      return node && isLeaf(node) ? node : null;
+      return findWidget(this.widgets, this.selectedNodeId);
     },
 
     settingsNode() {
-      return this.rootOrganizer && this.settingsNodeId ? findNode(this.rootOrganizer, this.settingsNodeId) : null;
+      return findWidget(this.widgets, this.settingsNodeId);
     },
 
     // Liz needs the AI agent CRD to be installed before offering to build anything.
@@ -465,7 +462,7 @@ export default {
 
       const source = sourceId ? this.views.find((p) => p.id === sourceId) : null;
 
-      panel.organizer = source ? this.clone(source.organizer) : ensureTrailingEmpty(newRootOrganizer());
+      panel.widgets = source ? this.clone(source.widgets || []) : [];
       panel.gap = source?.gap ?? DEFAULT_GAP;
       this.startedFrom = source ? source.name : '';
       this.selectedNodeId = null;
@@ -632,16 +629,16 @@ export default {
 
     // ---- grid mutations (draft only) ----------------------------------------------------------
 
-    // Every tree change re-runs tidyRoot: loose widgets get wrapped in their own row and the view
-    // always ends with exactly one empty row to drop into.
+    // Every change to the grid goes through here: it replaces the active view's widget list with
+    // a new one, so a mutation is always a pure list operation over a draft.
     //
-    // A STOCK view has no tree at all — it is Rancher's own Home rendered as a view — so every edit
+    // A STOCK view has no list at all — it is Rancher's own Home rendered as a view — so every edit
     // here is a no-op rather than a crash. The drawer says as much (see `activeIsStock`).
-    mutateTree(fn) {
+    mutate(fn) {
       const panel = this.workingPanel();
 
-      if (panel && panel.organizer) {
-        panel.organizer = tidyRoot(fn(panel.organizer));
+      if (panel && Array.isArray(panel.widgets)) {
+        panel.widgets = fn(panel.widgets);
       }
     },
 
@@ -649,49 +646,16 @@ export default {
       this.selectedNodeId = id;
     },
 
-    // Where a widget lands when it is CLICKED in the catalog rather than dragged.
-    //
-    // It fills the LAST ROW while there is room for it, and only starts a new one when there is
-    // not. Clicking Cluster health, Active alerts and Upgrade status in turn therefore builds the
-    // row of three you were picturing, instead of three rows of one.
-    addTargetId(span = 12) {
-      const root = this.rootOrganizer;
-
-      if (!root) {
-        return null;
-      }
-
-      const rows = (root.children || []).filter((child) => !isLeaf(child));
-      const filled = rows.filter((row) => (row.children || []).length);
-      const last = filled[filled.length - 1];
-
-      if (last) {
-        const used = (last.children || []).reduce((total, child) => total + (child.colSpan || 0), 0);
-
-        if (used + span <= GRID_COLUMNS) {
-          return last.id;
-        }
-      }
-
-      // No room (or nothing placed yet): the trailing empty row, which tidyRoot always keeps.
-      const trailing = rows[rows.length - 1];
-
-      return trailing && !(trailing.children || []).length ? trailing.id : root.id;
-    },
-
-    addFromCatalog(entry, at) {
+    // Clicked in the catalog rather than dragged, so it goes on the end — where it lands beside
+    // the last widget if there is room on that line, and starts a new one if there is not.
+    addFromCatalog(entry, index) {
       if (!entry) {
         return;
       }
 
       const node = newWidgetNode(entry.spec, { colSpan: entry.span });
 
-      if (at) {
-        this.mutateTree((root) => insertNode(root, at.parentId, node, at.index));
-      } else {
-        this.mutateTree((root) => addChild(root, this.addTargetId(node.colSpan), node));
-      }
-
+      this.mutate((widgets) => insertWidget(widgets, node, index));
       this.selectedNodeId = node.id;
     },
 
@@ -713,7 +677,7 @@ export default {
       this.ui.dragLabel = '';
     },
 
-    dropInto(parentId, index) {
+    dropAt(index) {
       const entry = this.ui.dragEntry;
       const id = this.ui.dragId;
 
@@ -722,7 +686,7 @@ export default {
       this.ui.dragLabel = '';
 
       if (entry) {
-        this.addFromCatalog(entry, { parentId, index });
+        this.addFromCatalog(entry, index);
 
         return;
       }
@@ -731,14 +695,14 @@ export default {
         return;
       }
 
-      this.mutateTree((root) => moveNodeTo(root, id, parentId, index));
+      this.mutate((widgets) => moveWidgetTo(widgets, id, index));
       this.selectedNodeId = id;
     },
 
     // ---- layout of the selected widget --------------------------------------------------------
 
     setColSpan(id, span) {
-      this.mutateTree((root) => setColSpan(root, id, span));
+      this.mutate((widgets) => setColSpan(widgets, id, span));
     },
 
     setSelectedWidth(span) {
@@ -769,7 +733,7 @@ export default {
       if (!id) {
         return;
       }
-      this.mutateTree((root) => updateNode(root, id, (node) => ({ ...node, [key]: value })));
+      this.mutate((widgets) => updateWidget(widgets, id, (w) => ({ ...w, [key]: value })));
     },
 
     // `box` is 'margin' or 'padding' — both are four-sided values edited the same way, in pixels.
@@ -782,7 +746,7 @@ export default {
 
       const px = Math.max(0, Math.round(Number(value) || 0));
 
-      this.mutateTree((root) => updateNode(root, id, (node) => ({ ...node, [box]: { ...node[box], [side]: px } })));
+      this.mutate((widgets) => updateWidget(widgets, id, (w) => ({ ...w, [box]: { ...w[box], [side]: px } })));
     },
 
     setGap(value) {
@@ -794,7 +758,7 @@ export default {
     },
 
     removeNode(id) {
-      this.mutateTree((root) => removeNode(root, id));
+      this.mutate((widgets) => removeWidget(widgets, id));
       if (this.selectedNodeId === id) {
         this.selectedNodeId = null;
       }
@@ -806,8 +770,8 @@ export default {
       }
     },
 
-    moveNode(id, delta) {
-      this.mutateTree((root) => moveNode(root, id, delta));
+    moveWidget(id, delta) {
+      this.mutate((widgets) => moveWidget(widgets, id, delta));
     },
 
     // ---- widget settings ----------------------------------------------------------------------
@@ -822,7 +786,7 @@ export default {
         return;
       }
 
-      this.mutateTree((root) => updateNode(root, id, (node) => ({ ...node, widget: spec })));
+      this.mutate((widgets) => updateWidget(widgets, id, (w) => ({ ...w, widget: spec })));
     },
 
     removeConfigured() {
@@ -846,13 +810,13 @@ export default {
         const node = newWidgetNode(widget, { colSpan: span || 6 });
 
         node.preview = true;
-        this.mutateTree((root) => addChild(root, this.addTargetId(node.colSpan), node));
+        this.mutate((widgets) => insertWidget(widgets, node));
         this.lizPreviewId = node.id;
         this.selectedNodeId = node.id;
       } else if (state === 'add' && widget) {
         const node = newWidgetNode(widget, { colSpan: span || 6 });
 
-        this.mutateTree((root) => addChild(root, this.addTargetId(node.colSpan), node));
+        this.mutate((widgets) => insertWidget(widgets, node));
         this.selectedNodeId = node.id;
       }
     },
@@ -862,7 +826,7 @@ export default {
         const id = this.lizPreviewId;
 
         this.lizPreviewId = null;
-        this.mutateTree((root) => removeNode(root, id));
+        this.mutate((widgets) => removeWidget(widgets, id));
       }
     },
 
@@ -942,18 +906,16 @@ export default {
         <div
           v-if="loaded && templatingEnabled && activeView && (editing || hasContent)"
           class="ai-home__surface"
-          @mouseleave="ui.hoverId = null"
         >
           <!-- A STOCK view is Rancher's own Home, kept as a tab — nothing to edit. -->
           <StockHome v-if="activeIsStock" />
-          <OrganizerNode
-            v-else-if="rootOrganizer"
-            :key="`${ activePanelId }-${ rootOrganizer.id }`"
-            :node="rootOrganizer"
+          <WidgetGrid
+            v-else
+            :key="activePanelId"
+            :widgets="widgets"
             :editing="editing"
             :selected-id="selectedNodeId"
             :gap="gap"
-            is-root
           />
         </div>
         <StockHome v-else-if="loaded" />

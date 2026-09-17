@@ -43,7 +43,7 @@ export function init($extension: IPlugin, store: any): void {
     route:      { name: ROUTE_TEMPLATES, params: { cluster: BLANK_CLUSTER } },
   });
 
-  // Home Layouts — the assembled Home VIEWS (panels + their organizer/template trees).
+  // Home Layouts — the assembled Home VIEWS (panels + the widgets on them).
   virtualType({
     labelKey:   'aiTemplating.layouts.label',
     name:       'ai-templating-layouts',

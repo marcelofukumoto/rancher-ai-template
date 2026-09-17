@@ -8,7 +8,7 @@ import { NODE_TEMPLATE, isStockPanel } from '../templating/view-model';
 import { BLANK_CLUSTER } from '@shell/store/store-types.js';
 
 // Lists the assembled Home VIEWS — their PANELS (which render as tabs) and, per panel, the tree of
-// ORGANIZERS and TEMPLATES inside it. Views are NOT templates (they live in the templating-home
+// WIDGETS inside it. Views are NOT templates (they live in the templating-home
 // ConfigMap), so they don't appear on the Home Templates page; this is their management view.
 // Editing happens on the Home page, or manually via Edit YAML below.
 export default {
@@ -83,28 +83,20 @@ export default {
       return isStockPanel(panel);
     },
 
-    // Flatten a panel's organizer tree into indented rows for display.
-    flatten(root, depth = 0, out = []) {
-      if (!root) {
-        return out;
-      }
+    // A panel's widgets, in the order they sit on the grid.
+    rowsFor(panel) {
+      return (panel?.widgets || []).map((w) => {
+        const isTemplate = w.type === NODE_TEMPLATE;
 
-      const isTemplate = root.type === NODE_TEMPLATE;
-
-      out.push({
-        id:      root.id,
-        depth,
-        isTemplate,
-        label:   isTemplate ? this.displayName(root.template) : (depth === 0 ? 'Panel root' : 'Organizer'),
-        kind:    isTemplate ? this.kindOf(root.template) : '',
-        // Templates are sized in columns; an organizer is always the full width of its container.
-        size:    isTemplate ? `col-span-${ root.colSpan }` : '100% wide',
-        padding: [root.padding?.top, root.padding?.right, root.padding?.bottom, root.padding?.left].join(' / '),
+        return {
+          id:      w.id,
+          isTemplate,
+          label:   isTemplate ? this.displayName(w.template) : (w.widget?.title || w.widget?.kind || 'Widget'),
+          kind:    isTemplate ? this.kindOf(w.template) : w.widget?.kind,
+          size:    `col-span-${ w.colSpan }`,
+          padding: [w.padding?.top, w.padding?.right, w.padding?.bottom, w.padding?.left].join(' / '),
+        };
       });
-
-      (root.children || []).forEach((child) => this.flatten(child, depth + 1, out));
-
-      return out;
     },
 
     // ---- manual YAML editing of the whole applied-Home config (templating-home data.home) ----
@@ -155,8 +147,8 @@ export default {
       Home Layouts
     </h1>
     <p class="text-muted mb-20">
-      The assembled Home <b>views</b> — each <b>panel</b> (panels render as tabs) and the tree of
-      <b>organizers</b> and <b>templates</b> inside it. Views aren't templates (they live in the
+      The assembled Home <b>views</b> — each <b>panel</b> (panels render as tabs) and the
+      <b>widgets</b> on it. Views aren't templates (they live in the
       <code>templating-home</code> config), so they don't show on the
       <router-link :to="settingsRoute">
         Home Templates
@@ -267,11 +259,11 @@ export default {
             </thead>
             <tbody>
               <tr
-                v-for="row in flatten(panel.organizer)"
+                v-for="row in rowsFor(panel)"
                 :key="row.id"
               >
                 <td>
-                  <span :style="{ paddingLeft: `${ row.depth * 16 }px` }">
+                  <span>
                     <span class="home-layouts__node-icon">{{ row.isTemplate ? '▤' : '▣' }}</span>
                     {{ row.label }}
                   </span>

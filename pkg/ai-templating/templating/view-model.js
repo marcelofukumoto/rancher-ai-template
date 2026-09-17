@@ -1,48 +1,42 @@
-// The VIEW model — the structure behind a configurable page like the Home.
+// The VIEW model — the structure behind the configurable Home.
 //
 // Vocabulary (used consistently in the code, the UI and the stored ConfigMap):
 //
-//   VIEW       a page (the Home is a VIEW). Holds one or more PANELS.
-//   PANEL      one screen of a view. When a view has more than one PANEL they render as TABS.
-//              A LAYOUT panel has a ROOT ORGANIZER that always fills it (100% x 100%); a STOCK
-//              panel has no layout at all and renders Rancher's own Home, so a view can mix the
-//              real Home in as a tab beside templated ones.
-//   ORGANIZER  a row. It is ALWAYS the full width of whatever contains it, and lays its children out
-//              on a 12-COLUMN grid. Organizers stack top-to-bottom and may nest (a nested organizer
-//              takes a whole row of its parent, which is what keeps "always 100% wide" true).
-//   TEMPLATE   a leaf rendering one stored template ConfigMap. Its width is a COLUMN SPAN
-//              (col-span-1 … col-span-12) — drag its edge to resize.
+//   VIEW     a page. Holds one or more PANELS.
+//   PANEL    one named view, and one tab in the bar. A LAYOUT panel is a flat list of WIDGETS; a
+//            STOCK panel has no list at all and renders Rancher's own Home, so a view can mix the
+//            real Home in as a tab beside configured ones.
+//   WIDGET   one building block on the grid — a table, counters, a bar chart, markdown — sized by a
+//            COLUMN SPAN (1…12) and configured through its own settings panel. A TEMPLATE widget is
+//            the older kind: a leaf rendering one stored template ConfigMap, sized the same way.
 //
-// There is only ONE kind of organizer, so there is nothing to choose between: add one, drop things
-// in, drag them around. The ROOT always keeps one trailing EMPTY organizer as a drop target.
+// There are NO rows. A panel's widgets are one flat, ordered list, and they WRAP: a widget starts a
+// new line when there is no room left on the current one, exactly as a paragraph wraps words. Rows
+// used to be explicit nodes you could select and pad; they are gone, because a row was structure
+// pretending to be a thing you configure. Spacing now lives in the two places that own it — per
+// widget (its own margin and padding) and per view (the gap between every widget).
 //
 // Pure functions — no Vue, no store.
 
-/** Node types allowed in a panel's tree. */
-export const NODE_ORGANIZER = 'organizer';
-export const NODE_TEMPLATE = 'template';
+/** Node types allowed in a panel's widget list. */
 export const NODE_WIDGET = 'widget';
-
-/** True for a LEAF node — a widget or a stored template. Only organizers have children. */
-export function isLeaf(node) {
-  return !!node && (node.type === NODE_TEMPLATE || node.type === NODE_WIDGET);
-}
+export const NODE_TEMPLATE = 'template';
 
 /**
- * A PANEL is either a layout (a root organizer of templates) or the STOCK Rancher home rendered
- * as-is. A stock panel has no organizer and nothing to configure — it exists so a view can mix the
- * real Home in as one tab alongside templated ones.
+ * A PANEL is either a layout (a list of widgets) or the STOCK Rancher home rendered as-is. A stock
+ * panel has no widgets and nothing to configure — it exists so a view can mix the real Home in as
+ * one tab alongside configured ones.
  */
 export const PANEL_LAYOUT = 'layout';
 export const PANEL_STOCK = 'stock';
 
-/** Organizers lay their children out on this many columns. */
+/** Widgets are laid out on this many columns. */
 export const GRID_COLUMNS = 12;
 
-/** Default column span for a newly dropped widget (half a row). */
+/** Default column span for a newly dropped widget (half a line). */
 export const DEFAULT_COL_SPAN = 6;
 
-/** The gap between widgets. One value for the whole VIEW (a view-level setting, not per widget). */
+/** The gap between widgets. One value for the whole VIEW, not something per widget. */
 export const DEFAULT_GAP = 20;
 
 /** One grid row. `2 rows` is two of these plus the gap between them. */
@@ -96,36 +90,6 @@ export const SPACING_PRESETS = [
   },
 ];
 
-/** The width preset a column span corresponds to (null when it matches none of them). */
-export function widthPresetOf(span) {
-  return WIDTH_PRESETS.find((p) => p.span === clampSpan(span))?.id || null;
-}
-
-/** Height in px for N grid rows, including the gaps they span. */
-export function rowsHeight(rows, gap = DEFAULT_GAP) {
-  return (rows * ROW_HEIGHT) + ((rows - 1) * gap);
-}
-
-/** The height preset a stored height corresponds to ('fit' for auto / anything unrecognized). */
-export function heightPresetOf(height, gap = DEFAULT_GAP) {
-  return HEIGHT_PRESETS.find((p) => p.rows && height === rowsHeight(p.rows, gap))?.id || 'fit';
-}
-
-/** The stored height for a height preset id. */
-export function heightForPreset(id, gap = DEFAULT_GAP) {
-  const preset = HEIGHT_PRESETS.find((p) => p.id === id);
-
-  return preset?.rows ? rowsHeight(preset.rows, gap) : 'auto';
-}
-
-/** The spacing preset a node's padding corresponds to (null once Advanced has overridden it). */
-export function spacingPresetOf(padding) {
-  const p = normalizeSides(padding);
-  const same = p.top === p.right && p.right === p.bottom && p.bottom === p.left;
-
-  return (same && SPACING_PRESETS.find((s) => s.padding === p.top)?.id) || null;
-}
-
 let idSeq = 0;
 
 function uid(prefix) {
@@ -143,7 +107,7 @@ export function newId(prefix = 'id') {
   return uid(prefix);
 }
 
-// ---- value normalization ----
+// ---- value normalization ------------------------------------------------------------------------
 
 /** Clamp a column span into 1..12. */
 export function clampSpan(span) {
@@ -205,32 +169,39 @@ export function cssSides(sides) {
   return [p.top, p.right, p.bottom, p.left].map(cssSize).join(' ');
 }
 
-// ---- node factories ----
+// ---- presets ------------------------------------------------------------------------------------
 
-/** A new ORGANIZER (a full-width row on a 12-column grid). */
-export function newOrganizer(opts = {}) {
-  return {
-    id:       opts.id || uid('org'),
-    type:     NODE_ORGANIZER,
-    height:   normalizeSize(opts.height, 'auto'),
-    margin:   normalizeSides(opts.margin),
-    padding:  normalizeSides(opts.padding),
-    children: Array.isArray(opts.children) ? opts.children : [],
-  };
+/** The width preset a column span corresponds to (null when it matches none of them). */
+export function widthPresetOf(span) {
+  return WIDTH_PRESETS.find((p) => p.span === clampSpan(span))?.id || null;
 }
 
-/** A new TEMPLATE leaf, sized by its column span. */
-export function newTemplateNode(template, opts = {}) {
-  return {
-    id:       opts.id || uid('tpl'),
-    type:     NODE_TEMPLATE,
-    template: template || '',
-    colSpan:  clampSpan(opts.colSpan ?? DEFAULT_COL_SPAN),
-    height:   normalizeSize(opts.height, 'auto'),
-    margin:   normalizeSides(opts.margin),
-    padding:  normalizeSides(opts.padding),
-  };
+/** Height in px for N grid rows, including the gaps they span. */
+export function rowsHeight(rows, gap = DEFAULT_GAP) {
+  return (rows * ROW_HEIGHT) + ((rows - 1) * gap);
 }
+
+/** The height preset a stored height corresponds to ('fit' for auto / anything unrecognized). */
+export function heightPresetOf(height, gap = DEFAULT_GAP) {
+  return HEIGHT_PRESETS.find((p) => p.rows && height === rowsHeight(p.rows, gap))?.id || 'fit';
+}
+
+/** The stored height for a height preset id. */
+export function heightForPreset(id, gap = DEFAULT_GAP) {
+  const preset = HEIGHT_PRESETS.find((p) => p.id === id);
+
+  return preset?.rows ? rowsHeight(preset.rows, gap) : 'auto';
+}
+
+/** The spacing preset a widget's padding corresponds to (null once Advanced has overridden it). */
+export function spacingPresetOf(padding) {
+  const p = normalizeSides(padding);
+  const same = p.top === p.right && p.right === p.bottom && p.bottom === p.left;
+
+  return (same && SPACING_PRESETS.find((s) => s.padding === p.top)?.id) || null;
+}
+
+// ---- widgets ------------------------------------------------------------------------------------
 
 /**
  * Normalize a WIDGET spec — the declarative description of what one widget shows. Every field is
@@ -284,84 +255,41 @@ export function normalizeWidget(widget) {
   return out;
 }
 
-/** A new WIDGET leaf — one building block on the grid, sized by its column span. */
-export function newWidgetNode(widget, opts = {}) {
-  const spec = normalizeWidget(typeof widget === 'string' ? { kind: widget } : widget);
+/** The box every widget on the grid carries: how wide, how tall, and its own spacing. */
+function widgetBox(opts, defaultSpan) {
   const padding = opts.padding ?? {
     top: 16, right: 16, bottom: 16, left: 16
   };
 
   return {
-    id:      opts.id || uid('w'),
-    type:    NODE_WIDGET,
-    widget:  spec,
-    colSpan: clampSpan(opts.colSpan ?? DEFAULT_COL_SPAN),
+    colSpan: clampSpan(opts.colSpan ?? defaultSpan),
     height:  normalizeSize(opts.height, 'auto'),
     margin:  normalizeSides(opts.margin),
     padding: normalizeSides(padding),
   };
 }
 
-/** The ROOT organizer of a panel: always fills the panel (100% x 100%). */
-export function newRootOrganizer(children = []) {
-  return newOrganizer({
-    id: uid('root'), height: '100%', children
-  });
-}
-
-/**
- * A new PANEL — one named VIEW in the tab strip. Starts with one empty organizer to drop into.
- * `gap` is the space between its widgets: one value for the whole view (see the Layout tab).
- */
-export function newPanel(name, opts = {}) {
+/** A new WIDGET — one building block on the grid. */
+export function newWidgetNode(widget, opts = {}) {
   return {
-    id:        opts.id || uid('panel'),
-    name:      name || 'Untitled view',
-    gap:       Number.isFinite(Number(opts.gap)) ? Number(opts.gap) : DEFAULT_GAP,
-    organizer: ensureTrailingEmpty(newRootOrganizer(opts.children || [])),
+    id:     opts.id || uid('w'),
+    type:   NODE_WIDGET,
+    widget: normalizeWidget(typeof widget === 'string' ? { kind: widget } : widget),
+    ...widgetBox(opts, DEFAULT_COL_SPAN),
   };
 }
 
-/** A new STOCK panel: renders the real Rancher home, with no layout of its own. */
-export function newStockPanel(name) {
+/** A TEMPLATE widget — the older kind, rendering one stored template ConfigMap. */
+export function newTemplateNode(template, opts = {}) {
   return {
-    id: uid('panel'), name: name || 'Home', kind: PANEL_STOCK
+    id:       opts.id || uid('tpl'),
+    type:     NODE_TEMPLATE,
+    template: template || '',
+    ...widgetBox(opts, DEFAULT_COL_SPAN),
   };
 }
 
-/** True when a panel renders the stock Rancher home rather than a template layout. */
-export function isStockPanel(panel) {
-  return panel?.kind === PANEL_STOCK;
-}
-
-/** A new empty VIEW — one panel. */
-export function emptyView() {
-  return { panels: [newPanel('Home')] };
-}
-
-/** True when a node is an organizer holding nothing. */
-export function isEmptyOrganizer(node) {
-  return !!node && node.type === NODE_ORGANIZER && !(node.children || []).length;
-}
-
-/**
- * The ROOT always ends with ONE empty organizer — the "drop things here" target. Any extra trailing
- * empties are collapsed so the surface never grows a stack of blank rows.
- */
-export function ensureTrailingEmpty(root) {
-  const children = [...(root.children || [])];
-
-  while (children.length && isEmptyOrganizer(children[children.length - 1])) {
-    children.pop();
-  }
-
-  children.push(newOrganizer());
-
-  return { ...root, children };
-}
-
-// ---- normalization (defensive: stored JSON is user/AI editable) ----
-
+/** Coerce one stored entry into a widget, or null when it is neither kind. */
 function normalizeNode(node) {
   if (!node || typeof node !== 'object') {
     return null;
@@ -376,23 +304,11 @@ function normalizeNode(node) {
       return null;
     }
 
-    // A previous format sized templates with a CSS width ('66%'); convert it to a column span.
-    const colSpan = node.colSpan ?? spanFromWidth(node.width);
-
-    return newTemplateNode(node.template, { ...node, colSpan });
+    // A previous format sized widgets with a CSS width ('66%'); convert it to a column span.
+    return newTemplateNode(node.template, { ...node, colSpan: node.colSpan ?? spanFromWidth(node.width) });
   }
 
-  let children = (Array.isArray(node.children) ? node.children : []).map(normalizeNode).filter(Boolean);
-
-  // Legacy `gap` (a grid gap between every child) becomes a left MARGIN on each child after the
-  // first — the same visible separation, expressed the way the editor now models spacing.
-  if (node.gap) {
-    children = children.map((child, i) => (
-      i === 0 ? child : { ...child, margin: { ...child.margin, left: node.gap } }
-    ));
-  }
-
-  return newOrganizer({ ...node, children });
+  return null;
 }
 
 /** Convert an old percentage/fraction width into a 1..12 column span. */
@@ -409,43 +325,75 @@ function spanFromWidth(width) {
 }
 
 /**
- * Keep a panel root well-formed: 100% height, children are all ORGANIZERS (a template dropped loose
- * on the root gets its own organizer, so the shape is always root → organizers → templates), and
- * exactly one trailing empty organizer to drop into. Run after every edit.
+ * Flatten anything a panel might hold into one ordered list of widgets.
+ *
+ * Stored views used to be a TREE of organizers (rows, nestable) with widgets at the leaves. Rows are
+ * gone, so a stored tree is read by walking it in order and keeping the leaves: the widgets come out
+ * in the order they were drawn, and wrap into the same lines whenever their spans filled a row —
+ * which is the case for every view built by the old editor. A row's own padding is dropped, because
+ * there is no longer anything for it to belong to.
  */
-export function tidyRoot(root) {
-  const children = (root.children || []).map((child) => (
-    isLeaf(child) ? newOrganizer({ children: [child] }) : child
-  ));
+function flattenWidgets(value) {
+  const out = [];
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') {
+      return;
+    }
 
-  return ensureTrailingEmpty({
-    ...root, height: '100%', children
-  });
-}
+    const leaf = normalizeNode(node);
 
-/** Force a node to be the panel root. */
-function asRoot(node) {
-  const org = node && !isLeaf(node) ? normalizeNode(node) : null;
+    if (leaf) {
+      out.push(leaf);
 
-  if (org) {
-    return tidyRoot(org);
+      return;
+    }
+
+    (Array.isArray(node.children) ? node.children : []).forEach(walk);
+  };
+
+  if (Array.isArray(value)) {
+    value.forEach(walk);
+  } else {
+    walk(value);
   }
 
-  // A bare template (or nothing) at the root gets wrapped so the root is always an organizer.
-  const child = normalizeNode(node);
+  return out;
+}
 
-  return ensureTrailingEmpty(newRootOrganizer(child ? [newOrganizer({ children: [child] })] : []));
+// ---- panels & views -----------------------------------------------------------------------------
+
+/** A new PANEL — one named VIEW in the tab strip. */
+export function newPanel(name, opts = {}) {
+  return {
+    id:      opts.id || uid('panel'),
+    name:    name || 'Untitled view',
+    gap:     Number.isFinite(Number(opts.gap)) ? Number(opts.gap) : DEFAULT_GAP,
+    widgets: Array.isArray(opts.widgets) ? opts.widgets : [],
+  };
+}
+
+/** A new STOCK panel: renders the real Rancher home, with no widgets of its own. */
+export function newStockPanel(name) {
+  return {
+    id: uid('panel'), name: name || 'Home', kind: PANEL_STOCK
+  };
+}
+
+/** True when a panel renders the stock Rancher home rather than a grid of widgets. */
+export function isStockPanel(panel) {
+  return panel?.kind === PANEL_STOCK;
 }
 
 function normalizePanel(panel) {
-  // A stock panel carries no organizer — there is nothing to lay out.
+  // A stock panel carries no widgets — there is nothing to lay out.
   const out = isStockPanel(panel) ? {
     id: panel?.id || uid('panel'), name: panel?.name || 'Home', kind: PANEL_STOCK
   } : {
-    id:        panel?.id || uid('panel'),
-    name:      panel?.name || 'Untitled view',
-    gap:       Number.isFinite(Number(panel?.gap)) ? Number(panel.gap) : DEFAULT_GAP,
-    organizer: asRoot(panel?.organizer),
+    id:      panel?.id || uid('panel'),
+    name:    panel?.name || 'Untitled view',
+    gap:     Number.isFinite(Number(panel?.gap)) ? Number(panel.gap) : DEFAULT_GAP,
+    // `widgets` is the shape now; `organizer` is the tree this replaced.
+    widgets: flattenWidgets(panel?.widgets ?? panel?.organizer),
   };
 
   // Published organization templates are marked so the UI can show (and protect) them.
@@ -462,14 +410,17 @@ function normalizePanel(panel) {
   return out;
 }
 
-// ---- legacy migration ----
+/** A new empty VIEW — one panel. */
+export function emptyView() {
+  return { panels: [newPanel('Home')] };
+}
 
 /**
- * Convert a LEGACY 12-column grid list ({ template, x, y, w, h, pad }) into organizer rows: panels
- * sharing a `y` become one organizer, and each keeps its column count as its col span.
+ * Convert a LEGACY 12-column grid list ({ template, x, y, w, h, pad }) into widgets, in reading
+ * order. The rows it described fall out of the spans wrapping.
  */
-function gridToRows(gridPanels) {
-  const items = (Array.isArray(gridPanels) ? gridPanels : [])
+function gridToWidgets(gridPanels) {
+  return (Array.isArray(gridPanels) ? gridPanels : [])
     .filter((p) => p && p.template)
     .map((p) => ({
       template: p.template,
@@ -478,286 +429,135 @@ function gridToRows(gridPanels) {
       w:        clampSpan(Number(p.w) || GRID_COLUMNS),
       padding:  p.pad,
     }))
-    .sort((a, b) => a.y - b.y || a.x - b.x);
-
-  const rows = [];
-
-  items.forEach((item) => {
-    const row = rows.find((r) => r.y === item.y);
-
-    if (row) {
-      row.items.push(item);
-    } else {
-      rows.push({ y: item.y, items: [item] });
-    }
-  });
-
-  return rows.map((row) => newOrganizer({ children: row.items.map((item) => newTemplateNode(item.template, { colSpan: item.w, padding: item.padding })) }));
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+    .map((item) => newTemplateNode(item.template, { colSpan: item.w, padding: item.padding }));
 }
 
 /**
  * Coerce ANY stored value into a valid VIEW:
- *   - the current shape          { panels: [ { organizer } ] }
+ *   - the current shape          { panels: [ { widgets } ] }
+ *   - the organizer-tree shape   { panels: [ { organizer } ] }
  *   - the legacy dashboard shape { tabs:   [ { panels: [grid] } ] }
  *   - the legacy single name     "home"
  */
 export function migrateToView(value) {
-  // Current shape.
-  if (value && typeof value === 'object' && Array.isArray(value.panels)) {
-    const panels = value.panels.filter((p) => p && typeof p === 'object').map(normalizePanel);
+  const finish = (panels, source) => {
     const out = { panels: panels.length ? panels : [newPanel('Home')] };
 
     // Which view opens first. Dropped when it names a view that no longer exists.
-    if (value.defaultPanelId && panels.some((p) => p.id === value.defaultPanelId)) {
-      out.defaultPanelId = value.defaultPanelId;
+    if (source?.defaultPanelId && out.panels.some((p) => p.id === source.defaultPanelId)) {
+      out.defaultPanelId = source.defaultPanelId;
     }
 
-    if (value.disabled) {
+    if (source?.disabled) {
       out.disabled = true;
     }
 
     return out;
+  };
+
+  // Current shape (and the organizer-tree shape, which normalizePanel flattens).
+  if (value && typeof value === 'object' && Array.isArray(value.panels)) {
+    return finish(value.panels.filter((p) => p && typeof p === 'object').map(normalizePanel), value);
   }
 
   // Legacy: tabs[] of grid panels[].
   if (value && typeof value === 'object' && Array.isArray(value.tabs)) {
     const panels = value.tabs
       .filter((t) => t && typeof t === 'object')
-      .map((t) => ({
-        id:        t.id || uid('panel'),
-        name:      t.name || 'Panel',
-        organizer: ensureTrailingEmpty(newRootOrganizer(gridToRows(t.panels))),
-      }));
-    const out = { panels: panels.length ? panels : [newPanel('Home')] };
+      .map((t) => newPanel(t.name, { id: t.id, widgets: gridToWidgets(t.panels) }));
 
-    if (value.disabled) {
-      out.disabled = true;
-    }
-
-    return out;
+    return finish(panels, value);
   }
 
   // Legacy: a single applied template name.
   if (typeof value === 'string' && value) {
-    return {
-      panels: [{
-        id:        uid('panel'),
-        name:      'Home',
-        organizer: ensureTrailingEmpty(newRootOrganizer([
-          newOrganizer({ children: [newTemplateNode(value, { colSpan: GRID_COLUMNS })] }),
-        ])),
-      }],
-    };
+    return finish([newPanel('Home', { widgets: [newTemplateNode(value, { colSpan: GRID_COLUMNS })] })], null);
   }
 
   return emptyView();
 }
 
-// ---- tree operations (used by the editor; all return NEW trees) ----
+// ---- list operations (used by the editor; all return NEW lists) ----------------------------------
 
-function mapTree(node, fn) {
-  const mapped = fn(node);
-
-  if (!mapped || isLeaf(mapped)) {
-    return mapped;
-  }
-
-  return { ...mapped, children: (mapped.children || []).map((c) => mapTree(c, fn)).filter(Boolean) };
+/** Find a widget by id. */
+export function findWidget(widgets, id) {
+  return (widgets || []).find((w) => w.id === id) || null;
 }
 
-/** Find a node by id anywhere in the tree. */
-export function findNode(root, id) {
-  if (!root || !id) {
-    return null;
-  }
-  if (root.id === id) {
-    return root;
-  }
-
-  for (const child of root.children || []) {
-    const hit = findNode(child, id);
-
-    if (hit) {
-      return hit;
-    }
-  }
-
-  return null;
+/** Where a widget sits in the list (-1 when it is not there). */
+export function indexOfWidget(widgets, id) {
+  return (widgets || []).findIndex((w) => w.id === id);
 }
 
-/** Find the PARENT organizer of a node id (null for the root or a missing id). */
-export function findParent(root, id) {
-  for (const child of root?.children || []) {
-    if (child.id === id) {
-      return root;
-    }
+/** Insert a widget at `index` (appends when the index is omitted or past the end). */
+export function insertWidget(widgets, widget, index) {
+  const list = [...(widgets || [])];
+  const at = typeof index === 'number' ? Math.max(0, Math.min(list.length, index)) : list.length;
 
-    const hit = findParent(child, id);
+  list.splice(at, 0, widget);
 
-    if (hit) {
-      return hit;
-    }
+  return list;
+}
+
+/** Remove a widget by id. */
+export function removeWidget(widgets, id) {
+  return (widgets || []).filter((w) => w.id !== id);
+}
+
+/** Move a widget one place earlier (-1) or later (+1) in the list. */
+export function moveWidget(widgets, id, delta) {
+  const list = [...(widgets || [])];
+  const from = list.findIndex((w) => w.id === id);
+  const to = from + delta;
+
+  if (from < 0 || to < 0 || to >= list.length) {
+    return list;
   }
 
-  return null;
+  const [moved] = list.splice(from, 1);
+
+  list.splice(to, 0, moved);
+
+  return list;
 }
 
 /**
- * The chain of nodes from the root down to `id`, inclusive — the editor renders it as a breadcrumb
- * so you can always select an ANCESTOR (the panel root especially, which its children cover).
+ * DRAG & DROP: move an existing widget to `index`. The index is corrected for the gap the widget
+ * leaves behind, so dropping "just after myself" is a no-op rather than an off-by-one.
  */
-export function pathToNode(root, id) {
-  if (!root) {
-    return [];
-  }
-  if (root.id === id) {
-    return [root];
-  }
+export function moveWidgetTo(widgets, id, index) {
+  const list = [...(widgets || [])];
+  const from = list.findIndex((w) => w.id === id);
 
-  for (const child of root.children || []) {
-    const below = pathToNode(child, id);
-
-    if (below.length) {
-      return [root, ...below];
-    }
+  if (from < 0) {
+    return list;
   }
 
-  return [];
-}
+  let at = typeof index === 'number' ? index : list.length;
 
-/** True when `ancestorId` is (or contains) `id` — used to block dropping a node into itself. */
-export function contains(root, ancestorId, id) {
-  const ancestor = findNode(root, ancestorId);
-
-  return !!ancestor && !!findNode(ancestor, id);
-}
-
-/** Replace one node (by id) with the result of `fn(node)`. */
-export function updateNode(root, id, fn) {
-  return mapTree(root, (node) => (node.id === id ? fn(node) : node));
-}
-
-/** Insert a node into an organizer at `index` (appends when index is omitted). */
-export function insertNode(root, parentId, child, index) {
-  const target = parentId || root.id;
-
-  return mapTree(root, (node) => {
-    if (node.id !== target || isLeaf(node)) {
-      return node;
-    }
-
-    const children = [...(node.children || [])];
-    const at = typeof index === 'number' ? Math.max(0, Math.min(children.length, index)) : children.length;
-
-    children.splice(at, 0, child);
-
-    return { ...node, children };
-  });
-}
-
-/** Append a child to the organizer with the given id (defaults to the root). */
-export function addChild(root, parentId, child) {
-  return insertNode(root, parentId, child);
-}
-
-/** Remove a node by id. The root can never be removed. */
-export function removeNode(root, id) {
-  if (!id || root.id === id) {
-    return root;
+  if (from < at) {
+    at -= 1;
   }
 
-  return mapTree(root, (node) => {
-    if (isLeaf(node)) {
-      return node;
-    }
+  const [moved] = list.splice(from, 1);
 
-    return { ...node, children: (node.children || []).filter((c) => c.id !== id) };
-  });
+  list.splice(Math.max(0, Math.min(list.length, at)), 0, moved);
+
+  return list;
 }
 
-/** Move a node up (-1) or down (+1) among its siblings. */
-export function moveNode(root, id, delta) {
-  const parent = findParent(root, id);
-
-  if (!parent) {
-    return root;
-  }
-
-  return mapTree(root, (node) => {
-    if (node.id !== parent.id) {
-      return node;
-    }
-
-    const children = [...(node.children || [])];
-    const from = children.findIndex((c) => c.id === id);
-    const to = from + delta;
-
-    if (from < 0 || to < 0 || to >= children.length) {
-      return node;
-    }
-
-    const [moved] = children.splice(from, 1);
-
-    children.splice(to, 0, moved);
-
-    return { ...node, children };
-  });
+/** Replace one widget (by id) with the result of `fn(widget)`. */
+export function updateWidget(widgets, id, fn) {
+  return (widgets || []).map((w) => (w.id === id ? fn(w) : w));
 }
 
-/**
- * DRAG & DROP: move an existing node into `parentId` at `index`. Dropping a node into itself (or its
- * own subtree) is refused. When moving WITHIN the same parent the index is corrected for the gap the
- * node leaves behind, so dropping "just after myself" is a no-op rather than an off-by-one.
- */
-export function moveNodeTo(root, id, parentId, index) {
-  if (!id || id === root.id || id === parentId || contains(root, id, parentId)) {
-    return root;
-  }
-
-  const node = findNode(root, id);
-  const parent = findParent(root, id);
-
-  if (!node || !parent) {
-    return root;
-  }
-
-  let at = typeof index === 'number' ? index : Number.MAX_SAFE_INTEGER;
-
-  if (parent.id === parentId) {
-    const from = (parent.children || []).findIndex((c) => c.id === id);
-
-    if (from >= 0 && from < at) {
-      at -= 1;
-    }
-  }
-
-  return insertNode(removeNode(root, id), parentId, node, at);
+/** Set a widget's column span (1..12). */
+export function setColSpan(widgets, id, span) {
+  return updateWidget(widgets, id, (w) => ({ ...w, colSpan: clampSpan(span) }));
 }
 
-/** Set a template's column span (1..12). */
-export function setColSpan(root, id, span) {
-  return updateNode(root, id, (node) => ({ ...node, colSpan: clampSpan(span) }));
-}
-
-/** Every template ConfigMap name referenced anywhere in a node tree. */
-export function templatesInTree(root) {
-  const out = [];
-  const walk = (node) => {
-    if (!node) {
-      return;
-    }
-    if (node.type === NODE_TEMPLATE) {
-      out.push(node.template);
-
-      return;
-    }
-    if (node.type === NODE_WIDGET) {
-      return;
-    }
-    (node.children || []).forEach(walk);
-  };
-
-  walk(root);
-
-  return out;
+/** Every template ConfigMap name referenced by a panel's widgets. */
+export function templatesInView(widgets) {
+  return (widgets || []).filter((w) => w.type === NODE_TEMPLATE).map((w) => w.template);
 }

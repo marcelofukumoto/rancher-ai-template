@@ -104,7 +104,7 @@ export async function toggleTemplating(store, enabled) {
 
 // ---- VIEW resolution (the applied Home VIEW) ----
 // The stored config is { global: <View>, users: { <uid>: <View> } }. A View is { panels: [ { id,
-// name, organizer } ] } — see templating/view-model.js for the vocabulary.
+// name, widgets } ] } — see templating/view-model.js for the vocabulary.
 function homeConfig(getters) {
   const homeCm = cmById(getters, HOME_CONFIG_NAME);
 
@@ -287,7 +287,7 @@ async function persistHome(store, home) {
   }
 }
 
-/** Persist a whole Home VIEW (panels + their organizer trees) for a scope. null clears the scope. */
+/** Persist a whole Home VIEW (panels + the widgets on them) for a scope. null clears the scope. */
 export async function saveView(store, scope, view, userId) {
   const home = homeConfig(store.getters);
 

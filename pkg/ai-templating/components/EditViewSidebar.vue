@@ -100,7 +100,7 @@ export default {
         return '';
       }
       if (this.selected.type !== NODE_WIDGET) {
-        return this.selected.template || 'Row';
+        return `${ this.selected.template } (Template)`;
       }
 
       const widget = this.selected.widget;
