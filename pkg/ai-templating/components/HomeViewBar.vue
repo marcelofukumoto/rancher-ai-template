@@ -80,6 +80,33 @@ export default {
     },
   },
 
+  /**
+   * A menu closes on a CLICK outside it, or on Escape — not on the pointer leaving.
+   *
+   * Closing on mouseleave is how a hover menu behaves, and this is not one: you open it by clicking,
+   * so it has to stay open until you decide otherwise. Sliding the pointer a few pixels wide of it
+   * on the way to "Delete view" should not take the menu away from under you.
+   *
+   * The listeners exist only while the menu is open, so a closed bar costs nothing.
+   */
+  watch: {
+    menuOpen(open) {
+      if (open) {
+        // Next tick: the click that OPENED the menu is still travelling, and would close it again.
+        setTimeout(() => {
+          document.addEventListener('mousedown', this.onOutside);
+          window.addEventListener('keydown', this.onKey);
+        }, 0);
+      } else {
+        this.stopWatchingForClose();
+      }
+    },
+  },
+
+  beforeUnmount() {
+    this.stopWatchingForClose();
+  },
+
   methods: {
     toggleMenu() {
       this.menuOpen = !this.menuOpen;
@@ -87,6 +114,23 @@ export default {
 
     closeMenu() {
       this.menuOpen = false;
+    },
+
+    onOutside(ev) {
+      if (!this.$refs.menuWrap?.contains(ev.target)) {
+        this.closeMenu();
+      }
+    },
+
+    onKey(ev) {
+      if (ev.key === 'Escape') {
+        this.closeMenu();
+      }
+    },
+
+    stopWatchingForClose() {
+      document.removeEventListener('mousedown', this.onOutside);
+      window.removeEventListener('keydown', this.onKey);
     },
 
     run(event) {
@@ -179,8 +223,8 @@ export default {
       </button>
 
       <div
+        ref="menuWrap"
         class="vbar__menu-wrap"
-        @mouseleave="closeMenu"
       >
         <button
           class="vbar__icon-btn"
