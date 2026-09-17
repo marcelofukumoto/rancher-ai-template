@@ -2,6 +2,13 @@
 import WidgetNode from './WidgetNode.vue';
 import { GRID_COLUMNS, DEFAULT_GAP } from '../templating/view-model';
 
+// While a drag is in flight the browser does not scroll the page for you, so a drop target below
+// the fold is simply unreachable — you cannot scroll with the pointer held down. These drive an
+// edge-scroll: come within EDGE px of the top or bottom and the page moves, faster the closer you
+// get, until the pointer leaves the zone or the drag ends.
+const EDGE = 90;
+const MAX_SPEED = 22;
+
 // The grid: a view's widgets, in order, wrapping onto lines.
 //
 // It is ONE flex container, not a tree. A widget takes its span's share of a 12-column line and
@@ -43,7 +50,7 @@ export default {
   },
 
   data() {
-    return { dropIndex: -1 };
+    return { dropIndex: -1, scrollTimer: null };
   },
 
   computed: {
@@ -92,6 +99,20 @@ export default {
     },
   },
 
+  mounted() {
+    // A drag that ends anywhere — including outside the grid, or cancelled with Escape — must stop
+    // the page scrolling. dragend fires on the source, so listen for it globally.
+    this.onAnyDragEnd = () => this.stopScrolling();
+    document.addEventListener('dragend', this.onAnyDragEnd);
+    document.addEventListener('drop', this.onAnyDragEnd);
+  },
+
+  beforeUnmount() {
+    this.stopScrolling();
+    document.removeEventListener('dragend', this.onAnyDragEnd);
+    document.removeEventListener('drop', this.onAnyDragEnd);
+  },
+
   methods: {
     /**
      * Where a drop would land: compare the pointer with each widget's box. Widgets wrap, so a
@@ -121,6 +142,89 @@ export default {
       return tiles.length;
     },
 
+    // ---- edge scrolling while dragging ----
+
+    /** The scroller the page actually uses — Rancher scrolls a main element, not the window. */
+    scroller() {
+      if (this.scrollEl !== undefined) {
+        return this.scrollEl;
+      }
+
+      let el = this.$el?.parentElement;
+
+      while (el && el !== document.body) {
+        const style = getComputedStyle(el);
+
+        if (/(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight) {
+          this.scrollEl = el;
+
+          return el;
+        }
+        el = el.parentElement;
+      }
+
+      this.scrollEl = null;
+
+      return null;
+    },
+
+    // How fast to scroll for a pointer at `y`: 0 outside the edge zones, ramping to MAX_SPEED at
+    // the very edge, negative for up.
+    edgeSpeed(y) {
+      const top = this.scrollTop();
+      const bottom = this.scrollBottom();
+
+      if (y < top + EDGE) {
+        return -Math.ceil(((top + EDGE - y) / EDGE) * MAX_SPEED);
+      }
+      if (y > bottom - EDGE) {
+        return Math.ceil(((y - (bottom - EDGE)) / EDGE) * MAX_SPEED);
+      }
+
+      return 0;
+    },
+
+    scrollTop() {
+      const el = this.scroller();
+
+      return el ? el.getBoundingClientRect().top : 0;
+    },
+
+    scrollBottom() {
+      const el = this.scroller();
+
+      return el ? el.getBoundingClientRect().bottom : window.innerHeight;
+    },
+
+    autoScroll(y) {
+      const speed = this.edgeSpeed(y);
+
+      this.stopScrolling();
+
+      if (!speed) {
+        return;
+      }
+
+      const el = this.scroller();
+
+      this.scrollTimer = setInterval(() => {
+        if (el) {
+          el.scrollTop += speed;
+        } else {
+          window.scrollBy(0, speed);
+        }
+      }, 16);
+    },
+
+    stopScrolling() {
+      if (this.scrollTimer) {
+        clearInterval(this.scrollTimer);
+        this.scrollTimer = null;
+      }
+    },
+
+    // ---- drag & drop ----
+
     onDragOver(ev) {
       if (!this.dragActive) {
         return;
@@ -128,6 +232,7 @@ export default {
       ev.preventDefault();
       ev.dataTransfer.dropEffect = this.viewEditor.ui?.dragEntry ? 'copy' : 'move';
       this.dropIndex = this.computeDropIndex(ev);
+      this.autoScroll(ev.clientY);
     },
 
     onDragLeave(ev) {
@@ -136,6 +241,7 @@ export default {
         return;
       }
       this.dropIndex = -1;
+      this.stopScrolling();
     },
 
     onDrop(ev) {
@@ -147,6 +253,7 @@ export default {
       const index = this.dropIndex >= 0 ? this.dropIndex : this.computeDropIndex(ev);
 
       this.dropIndex = -1;
+      this.stopScrolling();
       this.viewEditor.dropAt(index);
     },
 
@@ -157,6 +264,7 @@ export default {
       ev.preventDefault();
       ev.stopPropagation();
       this.dropIndex = -1;
+      this.stopScrolling();
       this.viewEditor.dropAt(this.widgets.length);
     },
   },

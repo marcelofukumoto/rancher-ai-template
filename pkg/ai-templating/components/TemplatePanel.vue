@@ -4,7 +4,7 @@ import TemplateResourceList from './TemplateResourceList.vue';
 import TemplateOverview from './TemplateOverview.vue';
 import WidgetBanner from './widgets/WidgetBanner.vue';
 import WidgetLinks from './widgets/WidgetLinks.vue';
-import WidgetClusterList from './WidgetClusterList.vue';
+import WidgetClusterTable from './widgets/WidgetClusterTable.vue';
 import { templateByName } from '../templating/template-engine';
 
 // Renders ONE template as a dashboard panel, regardless of kind:
@@ -15,7 +15,7 @@ import { templateByName } from '../templating/template-engine';
 const WIDGETS = {
   banner:       'WidgetBanner',
   links:        'WidgetLinks',
-  clusterList:  'WidgetClusterList',
+  clusterList:  'WidgetClusterTable',
   resourceList: 'TemplateResourceList',
   overview:     'TemplateOverview',
 };
@@ -23,7 +23,7 @@ const WIDGETS = {
 export default {
   name:       'TemplatePanel',
   components: {
-    TemplateCode, TemplateResourceList, TemplateOverview, WidgetBanner, WidgetLinks, WidgetClusterList
+    TemplateCode, TemplateResourceList, TemplateOverview, WidgetBanner, WidgetLinks, WidgetClusterTable
   },
 
   props: {

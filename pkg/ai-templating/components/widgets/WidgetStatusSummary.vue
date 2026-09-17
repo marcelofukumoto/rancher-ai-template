@@ -35,6 +35,7 @@ export default {
     :loading="loading"
     :error="error"
     :empty="!groups.length"
+    :empty-text="emptyText"
   >
     <div class="wstatus">
       <div class="wstatus__bar">

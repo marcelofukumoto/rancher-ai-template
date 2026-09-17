@@ -219,6 +219,7 @@ export function spacingPresetOf(padding) {
  *   groupBy     field a bar chart / status summary groups by
  *   limit       how many rows a list shows
  *   body        markdown (text widget)
+ *   source      'home' — Rancher's own links | 'custom' — the `links` below (links widget)
  *   links       [{ label, url }] (links widget)
  *   url         Grafana panel URL (time series widget)
  */
@@ -232,6 +233,7 @@ export function normalizeWidget(widget) {
     title:    str(w.title),
     resource: str(w.resource),
     where:    w.where === 'custom' ? 'custom' : 'view',
+    source:   w.source === 'custom' ? 'custom' : 'home',
     targets:  arr(w.targets).filter((t) => typeof t === 'string'),
     filter:   str(w.filter),
     columns:  arr(w.columns).filter((c) => typeof c === 'string'),

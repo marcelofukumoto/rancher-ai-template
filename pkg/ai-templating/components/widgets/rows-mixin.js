@@ -29,8 +29,25 @@ export default {
   },
 
   computed: {
+    /**
+     * Which store to read the resource from.
+     *
+     * NOT `currentStore`: that answers "where does this type live when you are inside a cluster",
+     * and sends anything cluster-scoped — a Fleet GitRepo, a Longhorn Volume, an Event — to the
+     * `cluster` store. The Home is not inside a cluster, so that store is empty here and the widget
+     * reported the type as missing when it was installed and readable all along.
+     *
+     * The Home reads the local cluster through MANAGEMENT (Steve /v1), so prefer whichever store
+     * actually has a schema for the type, management first.
+     */
     inStore() {
-      return this.widget.resource ? this.$store.getters['currentStore'](this.widget.resource) : 'management';
+      if (!this.widget.resource) {
+        return 'management';
+      }
+
+      const stores = ['management', this.$store.getters['currentStore'](this.widget.resource), 'cluster'];
+
+      return stores.find((store) => store && this.$store.getters[`${ store }/schemaFor`]?.(this.widget.resource)) || 'management';
     },
 
     schema() {
@@ -49,6 +66,17 @@ export default {
     visibleRows() {
       return this.widget.limit ? this.rows.slice(0, this.widget.limit) : this.rows;
     },
+
+    /**
+     * What to say when there is nothing to draw — and it matters WHY there is nothing. A type with
+     * no instances ("no GitRepo here yet") is a different answer from a filter that matched none,
+     * and neither of them is an error.
+     */
+    emptyText() {
+      const kind = this.schema?.attributes?.kind || this.widget.resource?.split('.').pop() || 'item';
+
+      return this.allRows.length ? `No ${ kind } matches this widget's filter.` : `No ${ kind } here yet.`;
+    },
   },
 
   watch: {
@@ -59,6 +87,12 @@ export default {
   },
 
   methods: {
+    // Exposed so a widget's template (and ResourceTable's column getters) can read a field the same
+    // way the filter and the sort do.
+    fieldValue(row, field) {
+      return fieldValue(row, field);
+    },
+
     async loadRows() {
       this.error = '';
 

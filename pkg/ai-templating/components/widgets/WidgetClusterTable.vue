@@ -8,15 +8,21 @@ import { MODE, _IMPORT } from '@shell/config/query-params';
 import { BLANK_CLUSTER } from '@shell/store/store-types.js';
 import { parseSi, formatSi, createMemoryFormat } from '@shell/utils/units';
 
-// Cluster list widget (JSON template building block). Reproduces the stock Home's cluster section
-// EXACTLY — the "Clusters" title, the Manage / Import Existing / Create buttons, and the same table
-// (schema = provisioning clusters; headers State / Name / Provider·Distro / Version·Architecture /
-// CPU / Memory / Pods with the name link + CPU/Memory read from the backing management cluster),
-// matching shell/pages/home.vue. The columns and sorting are FIXED — that is a table-layer concern.
+// HOME CLUSTER TABLE — the stock Home's cluster section, exactly.
 //
-// Widget spec: { type: 'clusterList', title?: 'Clusters' }
+// This is NOT the configurable Table building block pointed at clusters. It is the real thing from
+// shell/pages/home.vue: the "Clusters" heading, the Manage / Import Existing / Create buttons, and
+// the same table — provisioning clusters as rows, headers State / Name / Provider·Distro /
+// Version·Architecture / CPU / Memory / Pods, the name linking into the cluster, CPU and Memory read
+// from the backing management cluster.
+//
+// Nothing about it is configurable but the heading. Its columns, its sorting and its buttons belong
+// to the Home, and reproducing them through the generic Table's column pickers would be a worse
+// copy of something we can simply use.
+//
+// Widget spec: { kind: 'clusterTable', title?: 'Clusters' }
 export default {
-  name:       'WidgetClusterList',
+  name:       'WidgetClusterTable',
   components: { ResourceTable, RcButton },
 
   props: {

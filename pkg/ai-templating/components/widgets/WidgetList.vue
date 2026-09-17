@@ -39,7 +39,7 @@ export default {
     :loading="loading"
     :error="error"
     :empty="!rows.length"
-    empty-text="Nothing here right now."
+    :empty-text="emptyText"
   >
     <ul class="wlist">
       <li

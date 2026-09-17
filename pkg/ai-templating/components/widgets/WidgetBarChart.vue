@@ -30,6 +30,7 @@ export default {
     :loading="loading"
     :error="error"
     :empty="!bars.length"
+    :empty-text="emptyText"
   >
     <ul class="wbars">
       <li

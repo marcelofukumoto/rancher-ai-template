@@ -1,7 +1,8 @@
 <script>
 import { TABLE_COLUMNS, FIELDS } from '../templating/widget-data';
 import {
-  SUGGESTED_RESOURCES, blockName, WIDGET_TABLE, WIDGET_LIST, WIDGET_TEXT, WIDGET_LINKS, WIDGET_TIME_SERIES, WIDGET_BANNER
+  SUGGESTED_RESOURCES, blockName, WIDGET_TABLE, WIDGET_LIST, WIDGET_TEXT, WIDGET_LINKS,
+  WIDGET_TIME_SERIES, WIDGET_BANNER, WIDGET_CLUSTER_TABLE
 } from '../templating/widget-catalog';
 
 // "What this widget shows" — the panel behind a widget's ⚙.
@@ -13,6 +14,9 @@ import {
 // It edits a COPY and only hands it back on Done, so Cancel really does leave the widget alone. The
 // fields shown depend on the building block: a table needs columns and a sort, a text note needs a
 // body, a links list needs links — asking a Text widget which columns to show would be nonsense.
+// Block names that are plural or mass nouns, where "what this <name> shows" does not read.
+const PLURAL_NAMES = ['links', 'counters'];
+
 const PANEL_WIDTH = 400;
 const MARGIN = 12;
 
@@ -35,21 +39,29 @@ export default {
 
   data() {
     return {
-      draft:     JSON.parse(JSON.stringify(this.widget)),
-      resources: SUGGESTED_RESOURCES,
-      columns:   TABLE_COLUMNS,
-      fields:    FIELDS,
+      // Measured after mount: the panel can only be placed well if we know how tall it really is.
+      panelHeight: 0,
+      draft:       JSON.parse(JSON.stringify(this.widget)),
+      resources:   SUGGESTED_RESOURCES,
+      columns:     TABLE_COLUMNS,
+      fields:      FIELDS,
     };
   },
 
   computed: {
-    // Sit against the widget's left edge and stay on screen. Falls back to the middle of the
-    // viewport when we were not told where the widget is.
+    /**
+     * Sit against the widget's left edge, and ALWAYS fully on screen.
+     *
+     * The anchor is where the widget is, and for a widget near the bottom of a long page that is a
+     * point with no room under it. So the panel is placed against the anchor and then pushed back
+     * up by however much of it would fall off the bottom — clamped last against the view bar, which
+     * holds Cancel and Save and has to stay reachable while this is open.
+     */
     position() {
       const a = this.anchor;
       const bar = document.querySelector('.vbar');
-      // Never over the view bar: Cancel and Save live there and stay reachable with this open.
       const floor = bar ? Math.round(bar.getBoundingClientRect().bottom) + 8 : MARGIN;
+      const ceiling = Math.max(floor, window.innerHeight - (this.panelHeight || 420) - MARGIN);
 
       if (!a) {
         return {
@@ -57,23 +69,31 @@ export default {
         };
       }
 
-      const maxLeft = window.innerWidth - PANEL_WIDTH - MARGIN;
-      const left = Math.max(MARGIN, Math.min(a.left, maxLeft));
-      const top = Math.max(floor, Math.min(a.top, window.innerHeight - 200));
-
-      return { left: `${ left }px`, top: `${ top }px` };
+      return {
+        left: `${ Math.max(MARGIN, Math.min(a.left, window.innerWidth - PANEL_WIDTH - MARGIN)) }px`,
+        top:  `${ Math.max(floor, Math.min(a.top, ceiling)) }px`,
+      };
     },
 
     // "Clusters: what this table shows" — the widget's own title, then what kind of thing it is.
+    // A few block names are plural ("Links", "Counters") and do not fit that sentence, so those
+    // fall back to the generic noun rather than reading "what this links shows".
     heading() {
-      const what = blockName(this.draft.kind).toLowerCase();
+      const name = blockName(this.draft.kind);
+      const what = PLURAL_NAMES.includes(name.toLowerCase()) ? 'widget' : name.toLowerCase();
 
-      return `${ this.draft.title || blockName(this.draft.kind) }: what this ${ what } shows`;
+      return `${ this.draft.title || name }: what this ${ what } shows`;
     },
 
     // Which sections apply to this building block.
     readsData() {
-      return ![WIDGET_TEXT, WIDGET_LINKS, WIDGET_TIME_SERIES, WIDGET_BANNER].includes(this.draft.kind);
+      return ![WIDGET_TEXT, WIDGET_LINKS, WIDGET_TIME_SERIES, WIDGET_BANNER, WIDGET_CLUSTER_TABLE].includes(this.draft.kind);
+    },
+
+    // The Home cluster table is the stock Home's own table — its columns, sorting and actions are
+    // fixed there, so there is nothing here to change but the heading.
+    titleOnly() {
+      return this.draft.kind === WIDGET_CLUSTER_TABLE;
     },
 
     hasColumns() {
@@ -132,6 +152,13 @@ export default {
     };
     window.addEventListener('keydown', this.onKey);
 
+    // Place it knowing its real height (see `position`), and keep it on screen if the window moves.
+    this.measure = () => {
+      this.panelHeight = this.$refs.dialog?.getBoundingClientRect().height || 0;
+    };
+    this.$nextTick(this.measure);
+    window.addEventListener('resize', this.measure);
+
     // With no scrim there is nothing to click "through" to, so a click anywhere outside closes it.
     // Deferred past this tick so the very click that opened it does not immediately close it.
     this.onOutside = (ev) => {
@@ -144,6 +171,7 @@ export default {
 
   beforeUnmount() {
     window.removeEventListener('keydown', this.onKey);
+    window.removeEventListener('resize', this.measure);
     document.removeEventListener('mousedown', this.onOutside);
   },
 
@@ -177,7 +205,10 @@ export default {
     role="dialog"
     aria-label="Widget settings"
   >
-    <div class="wsm__dialog">
+    <div
+      ref="dialog"
+      class="wsm__dialog"
+    >
       <header class="wsm__head">
         <h3 class="wsm__title">
           <i class="icon icon-gear" />
@@ -199,6 +230,12 @@ export default {
           v-model="draft.title"
           class="wsm__field"
         >
+        <p
+          v-if="titleOnly"
+          class="wsm__hint"
+        >
+          This is the Home's own cluster table — its columns, sorting and buttons come with it.
+        </p>
 
         <template v-if="readsData">
           <label class="wsm__label">Resource</label>
@@ -347,16 +384,39 @@ export default {
         </template>
 
         <template v-if="draft.kind === 'links'">
-          <label class="wsm__label">Links</label>
-          <textarea
-            v-model="linksText"
-            class="wsm__field wsm__field--area"
-            rows="6"
-            placeholder="Runbook https://wiki.example.com/runbook"
-          />
+          <label class="wsm__label">Show</label>
+          <label class="wsm__radio">
+            <input
+              v-model="draft.source"
+              type="radio"
+              value="home"
+            >
+            Rancher's own links, as the Home shows them
+          </label>
+          <label class="wsm__radio">
+            <input
+              v-model="draft.source"
+              type="radio"
+              value="custom"
+            >
+            My own list
+          </label>
           <p class="wsm__hint">
-            One per line: the label, then the URL. Leave empty for Rancher's own community links.
+            Rancher's list follows the ui-custom-links setting, so it stays in step with the Home.
           </p>
+
+          <template v-if="draft.source === 'custom'">
+            <label class="wsm__label">Links</label>
+            <textarea
+              v-model="linksText"
+              class="wsm__field wsm__field--area"
+              rows="6"
+              placeholder="Runbook https://wiki.example.com/runbook"
+            />
+            <p class="wsm__hint">
+              One per line: the label, then the URL.
+            </p>
+          </template>
         </template>
 
         <template v-if="draft.kind === 'timeSeries'">

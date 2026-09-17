@@ -24,6 +24,7 @@ export const WIDGET_TIME_SERIES = 'timeSeries';
 export const WIDGET_TEXT = 'text';
 export const WIDGET_LINKS = 'links';
 export const WIDGET_BANNER = 'banner';
+export const WIDGET_CLUSTER_TABLE = 'clusterTable';
 
 /** The resource a fresh building block starts on — the one every Rancher install has. */
 const CLUSTER = CAPI.RANCHER_CLUSTER;
@@ -107,7 +108,7 @@ export const BUILDING_BLOCKS = [
     desc: 'Your own list of links',
     icon: 'links',
     span: 4,
-    spec: { kind: WIDGET_LINKS, title: 'Links' },
+    spec: { kind: WIDGET_LINKS, source: 'custom' },
   },
 ];
 
@@ -116,6 +117,16 @@ export const BUILDING_BLOCKS = [
  * Each is one of the blocks above with a resource, columns and sort already chosen.
  */
 export const READY_MADE = [
+  {
+    id:   'home-cluster-table',
+    name: 'Home cluster table',
+    desc: "The Home's own cluster table, exactly as it is",
+    icon: 'table',
+    span: 12,
+    // Not the Table block pointed at clusters — the real cluster section from the stock Home, with
+    // its own columns, sorting and buttons. Nothing to set up.
+    spec: { kind: WIDGET_CLUSTER_TABLE, title: '' },
+  },
   {
     id:   'cluster-list',
     name: 'Cluster list',
@@ -207,7 +218,7 @@ export const READY_MADE = [
     desc: "Rancher's own Docs / Forums / Slack list",
     icon: 'links',
     span: 4,
-    spec: { kind: WIDGET_LINKS, title: 'Links' },
+    spec: { kind: WIDGET_LINKS, source: 'home' },
   },
 ];
 
@@ -218,7 +229,9 @@ export function catalogEntry(id) {
 
 /** The building block a widget kind came from — for the "Selected: Clusters (Table)" label. */
 export function blockName(kind) {
-  return BUILDING_BLOCKS.find((b) => b.id === kind)?.name || kind;
+  return BUILDING_BLOCKS.find((b) => b.id === kind)?.name ||
+    READY_MADE.find((r) => r.spec.kind === kind)?.name ||
+    kind;
 }
 
 /** Case-insensitive search over a catalog list (name + description), as the Add tab's box does. */
