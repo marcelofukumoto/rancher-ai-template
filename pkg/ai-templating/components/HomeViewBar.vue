@@ -254,7 +254,8 @@ export default {
   padding:       0 20px;
   position:      sticky;
   top:           0;
-  z-index:       20;
+  // Below the app header's stacking context (see the note on z-index at the foot of this file).
+  z-index:       8;
 
   // A wash of the primary colour while editing — the same tint the drop zone and the selected
   // widget use, so the whole edit mode reads as one state.
@@ -461,4 +462,9 @@ export default {
     margin:     8px 0;
   }
 }
+
+// The shell's app header is a stacking context at z-index 14, and the user menu, the notification
+// tray and every other header dropdown live INSIDE it. So anything on the page at 14 or above does
+// not merely sit beside them — it covers the whole header, menus and all. Page chrome stays below
+// that ceiling; it only ever needs to beat the page, never the app.
 </style>

@@ -520,7 +520,9 @@ export default {
   position:       sticky;
   top:            57px;
   width:          380px;
-  z-index:        25;
+  // Above the view bar, below the app header's stacking context (see the note at the foot of this
+  // file) — the drawer is page chrome and must never cover the header's menus.
+  z-index:        9;
 
   &__head {
     align-items:     center;
@@ -841,4 +843,9 @@ export default {
     color: var(--error);
   }
 }
+
+// The shell's app header is a stacking context at z-index 14, and the user menu, the notification
+// tray and every other header dropdown live INSIDE it. So anything on the page at 14 or above does
+// not merely sit beside them — it covers the whole header, menus and all. Page chrome stays below
+// that ceiling; it only ever needs to beat the page, never the app.
 </style>

@@ -588,7 +588,9 @@ export default {
 // header, a 14/16/16 body whose fields are 8px apart, controls 24px tall, and a 32px footer row.
 .wsm {
   position: fixed;
-  z-index:  200;
+  // Over the grid and the drawer, still under the app header's stacking context (see the note at
+  // the foot of this file).
+  z-index:  12;
 
   &__dialog {
     background:     var(--body-bg);
@@ -740,4 +742,9 @@ export default {
     padding-top:     12px;
   }
 }
+
+// The shell's app header is a stacking context at z-index 14, and the user menu, the notification
+// tray and every other header dropdown live INSIDE it. So anything on the page at 14 or above does
+// not merely sit beside them — it covers the whole header, menus and all. Page chrome stays below
+// that ceiling; it only ever needs to beat the page, never the app.
 </style>
