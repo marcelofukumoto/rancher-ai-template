@@ -864,92 +864,91 @@ export default {
 
     <!-- While editing the page splits: the view keeps the full width it will really have, and every
        control lives in the drawer beside it. -->
-    <div
-      v-else
-      class="ai-home__layout"
-    >
-      <div class="ai-home__main">
-        <HomeViewBar
-          v-if="loaded && templatingEnabled"
-          ref="bar"
-          :views="views"
-          :active-id="activePanelId"
-          :editing="editing"
-          :is-new="isNewView"
-          :default-id="defaultViewId"
-          :dirty="dirty"
-          :saving="saving"
-          :started-from="startedFrom"
-          @select="selectPanel"
-          @edit="enterEdit"
-          @cancel="cancelEdit"
-          @save="save()"
-          @save-as-new="saveAsNewView"
-          @rename="renameView"
-          @rename-start="startRename"
-          @new-view="newView"
-          @duplicate="duplicateView"
-          @set-default="setDefaultView"
-          @publish="publishView"
-          @delete="deleteView"
-        />
-
-        <p
-          v-if="error"
-          class="ai-home__error"
-        >
-          {{ error }}
-        </p>
-
-        <!-- The active VIEW (or the edit surface). Gate on templatingEnabled so the kill switch
-           swaps to stock Rancher live. StockHome shows when nothing is applied. -->
-        <div
-          v-if="loaded && templatingEnabled && activeView && (editing || hasContent)"
-          class="ai-home__surface"
-        >
-          <!-- A STOCK view is Rancher's own Home, kept as a tab — nothing to edit. -->
-          <StockHome v-if="activeIsStock" />
-          <WidgetGrid
-            v-else
-            :key="activePanelId"
-            :widgets="widgets"
-            :editing="editing"
-            :selected-id="selectedNodeId"
-            :gap="gap"
-          />
-        </div>
-        <StockHome v-else-if="loaded" />
-      </div>
-
-      <EditViewSidebar
-        v-if="editing"
-        :view="activeView"
-        :selected="selectedNode"
-        :is-default="activePanelId === defaultViewId"
-        :liz-enabled="lizEnabled"
-        :is-stock="activeIsStock"
+    <template v-else>
+      <HomeViewBar
+        v-if="loaded && templatingEnabled"
+        ref="bar"
+        :views="views"
+        :active-id="activePanelId"
+        :editing="editing"
         :is-new="isNewView"
+        :default-id="defaultViewId"
+        :dirty="dirty"
+        :saving="saving"
         :started-from="startedFrom"
-        :starting-points="startingPoints"
-        @close="cancelEdit"
-        @add="addFromCatalog"
-        @drag-start="onCatalogDragStart"
-        @drag-end="onCatalogDragEnd"
-        @start-from="startFrom"
-        @set-width="setSelectedWidth"
-        @set-height="setSelectedHeight"
-        @set-spacing="setSelectedSpacing"
-        @set-box="setNodeBox"
-        @set-col-span="setSelectedWidth"
-        @advanced="ui.showBoxModel = $event"
-        @set-gap="setGap"
-        @set-name="renameView"
+        @select="selectPanel"
+        @edit="enterEdit"
+        @cancel="cancelEdit"
+        @save="save()"
+        @save-as-new="saveAsNewView"
+        @rename="renameView"
+        @rename-start="startRename"
+        @new-view="newView"
+        @duplicate="duplicateView"
         @set-default="setDefaultView"
         @publish="publishView"
         @delete="deleteView"
-        @liz-preview="onLizPreview"
       />
-    </div>
+
+      <p
+        v-if="error"
+        class="ai-home__error"
+      >
+        {{ error }}
+      </p>
+
+      <div class="ai-home__layout">
+        <div class="ai-home__main">
+          <!-- The active VIEW (or the edit surface). Gate on templatingEnabled so the kill switch
+           swaps to stock Rancher live. StockHome shows when nothing is applied. -->
+          <div
+            v-if="loaded && templatingEnabled && activeView && (editing || hasContent)"
+            class="ai-home__surface"
+          >
+            <!-- A STOCK view is Rancher's own Home, kept as a tab — nothing to edit. -->
+            <StockHome v-if="activeIsStock" />
+            <WidgetGrid
+              v-else
+              :key="activePanelId"
+              :widgets="widgets"
+              :editing="editing"
+              :selected-id="selectedNodeId"
+              :gap="gap"
+            />
+          </div>
+          <StockHome v-else-if="loaded" />
+        </div>
+
+        <EditViewSidebar
+          v-if="editing"
+          :view="activeView"
+          :selected="selectedNode"
+          :is-default="activePanelId === defaultViewId"
+          :liz-enabled="lizEnabled"
+          :is-stock="activeIsStock"
+          :is-new="isNewView"
+          :started-from="startedFrom"
+          :starting-points="startingPoints"
+          @close="cancelEdit"
+          @add="addFromCatalog"
+          @drag-start="onCatalogDragStart"
+          @drag-end="onCatalogDragEnd"
+          @start-from="startFrom"
+          @set-width="setSelectedWidth"
+          @set-height="setSelectedHeight"
+          @set-spacing="setSelectedSpacing"
+          @set-box="setNodeBox"
+          @set-col-span="setSelectedWidth"
+          @advanced="ui.showBoxModel = $event"
+          @set-gap="setGap"
+          @set-name="renameView"
+          @set-default="setDefaultView"
+          @publish="publishView"
+          @delete="deleteView"
+          @liz-preview="onLizPreview"
+        />
+      </div>
+    </template>
 
     <WidgetSettingsModal
       v-if="settingsNode && settingsNode.type === 'widget'"
@@ -969,8 +968,8 @@ export default {
     min-height: calc(100vh - var(--header-height, 54px));
   }
 
-  // While editing, the page and the controls sit side by side: the view keeps a real, full-width
-  // column (so what you see is what it will look like) and every control lives in the drawer.
+  // The bar spans the whole page — it belongs to the Home, not to the column beside the drawer —
+  // and the split below it is the grid and the drawer.
   &__layout {
     display: block;
   }

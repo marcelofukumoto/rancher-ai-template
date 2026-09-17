@@ -489,7 +489,8 @@ export default {
 </template>
 
 <style lang="scss" scoped>
-// 380px wide, full height, its own scroll — the grid beside it keeps the width it will really have.
+// 380px wide, its own scroll — the grid beside it keeps the width it will really have. It starts
+// below the view bar, which spans the whole page above both of them.
 .evs {
   background:     var(--body-bg);
   border-left:    1px solid var(--border);

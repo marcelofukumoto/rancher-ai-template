@@ -27,7 +27,7 @@ export default {
     @dragend="$emit('dragend')"
     @click="$emit('add', entry)"
   >
-    <i class="icon icon-drag ctile__grip" />
+    <i class="icon icon-menu ctile__grip" />
 
     <span class="ctile__thumb">
       <svg

@@ -257,11 +257,23 @@ export function normalizeWidget(widget) {
   return out;
 }
 
+// Widgets used to be created with 16px of padding around them. That was a mistake, not a choice:
+// the card inside already has its own 16px inset, so it was padding on top of padding, and the
+// design puts nothing at all between a card and its cell. A widget still carrying exactly that old
+// factory value is read as unset and comes back flush; anything else is a real decision and is kept.
+const LEGACY_DEFAULT_PADDING = 16;
+
+function isLegacyPadding(padding) {
+  return !!padding && [padding.top, padding.right, padding.bottom, padding.left]
+    .every((side) => side === LEGACY_DEFAULT_PADDING);
+}
+
 /** The box every widget on the grid carries: how wide, how tall, and its own spacing. */
 function widgetBox(opts, defaultSpan) {
-  const padding = opts.padding ?? {
-    top: 16, right: 16, bottom: 16, left: 16
-  };
+  // No padding by default — Compact. The card supplies the inset, the view's gap does the spacing.
+  const padding = !opts.padding || isLegacyPadding(opts.padding) ? {
+    top: 0, right: 0, bottom: 0, left: 0
+  } : opts.padding;
 
   return {
     colSpan: clampSpan(opts.colSpan ?? defaultSpan),

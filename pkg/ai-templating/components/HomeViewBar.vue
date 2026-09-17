@@ -256,8 +256,10 @@ export default {
   top:           0;
   z-index:       20;
 
+  // A wash of the primary colour while editing — the same tint the drop zone and the selected
+  // widget use, so the whole edit mode reads as one state. --nav-active is grey, not blue.
   &--editing {
-    background: var(--nav-active, rgba(61, 152, 211, 0.08));
+    background: var(--accent-btn);
   }
 
   &__home {
@@ -369,9 +371,12 @@ export default {
     white-space:   nowrap;
   }
 
+  // 32px, said three ways: the shell's global .btn rule is 40 tall with a 40px line-height.
   &__btn {
     flex:        0 0 auto;
     height:      32px;
+    line-height: 1;
+    min-height:  32px;
     min-width:   0;
     white-space: nowrap;
   }

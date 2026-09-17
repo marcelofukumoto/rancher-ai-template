@@ -361,7 +361,7 @@ export default {
     >
       <i
         class="wnode__grip icon"
-        :class="isPreview ? 'icon-chat' : 'icon-drag'"
+        :class="isPreview ? 'icon-chat' : 'icon-menu'"
       />
       <span class="wnode__label">{{ barLabel }}</span>
       <span class="wnode__bar-gap" />
@@ -479,19 +479,23 @@ export default {
   // ---- header ----
   // A 24px strip along the top of the widget, inside its frame: grip + "Drag to move" on the left,
   // settings and remove on the right.
+  // Inset by the frame's own 1px so the dashed outline stays visible AROUND the header, exactly as
+  // the design draws it — the widget is one dashed rectangle with the header sitting inside it, not
+  // a solid strip that cuts the outline open along the top.
   &__bar {
-    align-items: center;
-    background:  var(--sortable-table-header-bg, var(--box-bg));
-    box-sizing:  border-box;
-    display:     flex;
-    gap:         8px;
-    height:      24px;
-    left:        0;
-    padding:     0 8px;
-    position:    absolute;
-    right:       0;
-    top:         0;
-    z-index:     6;
+    align-items:   center;
+    background:    var(--sortable-table-header-bg, var(--box-bg));
+    border-radius: 3px 3px 0 0;
+    box-sizing:    border-box;
+    display:       flex;
+    gap:           8px;
+    height:        24px;
+    left:          1px;
+    padding:       0 8px;
+    position:      absolute;
+    right:         1px;
+    top:           1px;
+    z-index:       6;
   }
 
   &__grip {
@@ -535,7 +539,7 @@ export default {
   // The header sits over the widget, so push the widget itself down by exactly its height —
   // nothing is ever hidden underneath it.
   &--editing > &__content {
-    padding-top: 24px;
+    padding-top: 25px;
   }
 
   // Traps the rendered widget's stacking context at level 0, so its own z-indexes can't cover the
