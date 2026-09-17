@@ -1,5 +1,5 @@
 <script>
-import CountGauge from '@shell/components/CountGauge.vue';
+import ResourceSummary from '@shell/components/ResourceSummary.vue';
 import { colorForState } from '@shell/plugins/dashboard-store/resource-class';
 import { ucFirst } from '@shell/utils/string';
 import WidgetCard from './WidgetCard.vue';
@@ -8,23 +8,21 @@ import { groupRows } from '../../templating/widget-data';
 
 // COUNTERS — "Numbers with labels, such as clusters by state".
 //
-// Each number is Rancher's own CountGauge, the richest count it has: a gradient box with a ring
-// showing the healthy share, the count, its label, and warning/error tallies beside it. It is what
-// the cluster explorer and the cluster glance panel both use.
+// Each number is Rancher's own ResourceSummary: a SimpleBox with the number, its name, and amber
+// and red chips when some of what it counts is unhealthy. It is fed `spoofedCounts` rather than
+// left to count for itself, so it reports exactly what this widget's resource and filter selected.
 //
-// The FIRST gauge is the TOTAL, and it is the one that carries the alert tallies — "24 clusters, 17
-// of them unwell" is the shape of the question people ask. The rest are the groups, each tinted by
-// its own state so an error group is red without this widget deciding what "error" means.
-const COLOR_VARS = {
-  'text-success': '--success',
-  'text-info':    '--info',
-  'text-warning': '--warning',
-  'text-error':   '--error',
-};
-
+// ResourceSummary specifically, and NOT CountGauge, which is prettier and has a ring: CountGauge is
+// dead code in the shell. Nothing imports it; the only mentions are a leftover variable named
+// `totalCountGaugeInput` which both the cluster explorer and SingleClusterInfo hand to
+// ResourceSummary. Building a widget on a component the product no longer renders means inheriting
+// no design updates and a deletion at some point. This is the card Rancher actually uses.
+//
+// The FIRST card is the total, and it is the one that carries the chips — "42 clusters, 3 of them
+// in trouble" is the shape of the question people actually ask. The rest are the groups.
 export default {
   name:       'WidgetCounters',
-  components: { CountGauge, WidgetCard },
+  components: { ResourceSummary, WidgetCard },
   mixins:     [rows],
 
   computed: {
@@ -35,7 +33,7 @@ export default {
       return label.endsWith('s') ? label : `${ label }s`;
     },
 
-    // How many rows are in a warning or an error state, by Rancher's own reckoning.
+    // How many of the rows are in a warning or an error state, by Rancher's own reckoning.
     health() {
       return this.rows.reduce((acc, row) => {
         const color = colorForState(row.stateDisplay || row.state || '');
@@ -51,16 +49,13 @@ export default {
     },
 
     counters() {
-      const { warningCount, errorCount } = this.health;
       const total = {
-        key:    '__total',
-        name:   this.totalLabel,
-        total:  this.rows.length,
-        // The ring fills with what is HEALTHY, so the unwell share reads at a glance.
-        useful: this.rows.length - warningCount - errorCount,
-        warningCount,
-        errorCount,
-        color:  '--primary',
+        key:          '__total',
+        name:         this.totalLabel,
+        total:        this.rows.length,
+        useful:       this.rows.length - this.health.warningCount - this.health.errorCount,
+        warningCount: this.health.warningCount,
+        errorCount:   this.health.errorCount,
       };
 
       if (!this.widget.groupBy) {
@@ -70,13 +65,11 @@ export default {
       const groups = groupRows(this.rows, this.widget.groupBy).map((g) => ({
         key:          g.label,
         name:         ucFirst(g.label),
-        total:        this.rows.length,
-        // A group's ring shows its share of everything counted.
+        total:        g.count,
         useful:       g.count,
-        // Its own alert tally would just repeat its number.
+        // A group IS one state, so its own chip would just repeat its number.
         warningCount: 0,
         errorCount:   0,
-        color:        COLOR_VARS[colorForState(g.label)] || '--primary',
       }));
 
       return [total, ...groups];
@@ -92,15 +85,10 @@ export default {
     :error="error"
   >
     <div class="wcounters">
-      <CountGauge
+      <ResourceSummary
         v-for="counter in counters"
         :key="counter.key"
-        :name="counter.name"
-        :total="counter.total"
-        :useful="counter.useful"
-        :warning-count="counter.warningCount"
-        :error-count="counter.errorCount"
-        :primary-color-var="counter.color"
+        :spoofed-counts="counter"
       />
     </div>
   </WidgetCard>
@@ -110,7 +98,19 @@ export default {
 .wcounters {
   display:               grid;
   gap:                   12px;
-  // A gauge is a ring beside a number; below about 150px the two stop fitting side by side.
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  // ResourceSummary lays its number, name and chips out in ONE row (the cluster dashboard gives it
+  // a third of a full-width page). Below about 200px those collide, so that is the floor: a narrow
+  // widget stacks the cards, a wide one puts several across.
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+
+  :deep(.container) {
+    height:    100%;
+    margin:    0;
+    min-width: 0;
+  }
+
+  :deep(h1) {
+    margin-bottom: 0;
+  }
 }
 </style>
