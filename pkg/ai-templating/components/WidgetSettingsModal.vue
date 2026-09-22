@@ -368,7 +368,7 @@ export default {
               type="radio"
               value="view"
             >
-            Same as the view (all clusters I can see)
+            Same as the panel (all clusters I can see)
           </label>
           <label class="wsm__radio">
             <input
@@ -614,7 +614,7 @@ export default {
             class="btn btn-sm role-secondary"
             @click="$emit('remove')"
           >
-            Remove from view
+            Remove from panel
           </button>
           <button
             class="btn btn-sm role-primary"

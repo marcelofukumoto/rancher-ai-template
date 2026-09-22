@@ -294,7 +294,7 @@ export default {
     },
 
     cancelEdit() {
-      if (this.dirty && !window.confirm('Discard the changes to this view?')) {
+      if (this.dirty && !window.confirm('Discard the changes to this panel?')) {
         return;
       }
       this.leaveEdit();
@@ -436,8 +436,8 @@ export default {
 
       const template = this.orgTemplate;
       const panel = template ? {
-        ...this.clone(template), id: newId('panel'), name: 'Untitled view', org: undefined, from: undefined
-      } : newPanel('Untitled view');
+        ...this.clone(template), id: newId('panel'), name: 'Untitled panel', org: undefined, from: undefined
+      } : newPanel('Untitled panel');
 
       delete panel.org;
       delete panel.from;

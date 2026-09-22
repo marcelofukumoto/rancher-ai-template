@@ -137,7 +137,7 @@ export default {
   <aside class="evs">
     <header class="evs__head">
       <h3 class="evs__title">
-        Edit view<template v-if="view">
+        Edit panel<template v-if="view">
           &nbsp;-&nbsp; {{ view.name }}
         </template>
       </h3>
@@ -153,7 +153,7 @@ export default {
 
     <nav class="evs__tabs">
       <button
-        v-for="t in [{ id: 'add', label: 'Add' }, { id: 'layout', label: 'Layout' }, { id: 'view', label: 'View' }]"
+        v-for="t in [{ id: 'add', label: 'Add' }, { id: 'layout', label: 'Layout' }, { id: 'view', label: 'Panel' }]"
         :key="t.id"
         class="evs__tab"
         :class="{ 'evs__tab--active': tab === t.id }"
@@ -173,8 +173,8 @@ export default {
         v-if="isStock && tab !== 'view'"
         class="evs__hint"
       >
-        This view is Rancher's own Home. It has no grid, so there is nothing to add to it or lay
-        out. Rename it in the header, or make a new view to build one of your own.
+        This panel is Rancher's own Home. It has no grid, so there is nothing to add to it or lay
+        out. Rename it in the header, or make a new panel to build one of your own.
       </p>
 
       <!-- ---- ADD ---- -->
@@ -186,10 +186,10 @@ export default {
         >
           <h4 class="evs__new-title">
             <template v-if="startedFrom">
-              New view, started from {{ startedFrom }}
+              New panel, started from {{ startedFrom }}
             </template>
             <template v-else>
-              New view
+              New panel
             </template>
           </h4>
           <p class="evs__hint">
@@ -212,7 +212,7 @@ export default {
             </button>
           </div>
           <p class="evs__hint">
-            Nothing is saved until you press Save. Cancel throws the new view away.
+            Nothing is saved until you press Save. Cancel throws the new panel away.
           </p>
         </section>
 
@@ -285,7 +285,7 @@ export default {
         </p>
         <p class="evs__hint">
           Click a widget on the grid to lay it out. Width, height and spacing are per widget; the
-          grid gap is the same for the whole view.
+          grid gap is the same for the whole panel.
         </p>
 
         <template v-if="selected">
@@ -420,7 +420,7 @@ export default {
       <!-- ---- VIEW ---- -->
       <template v-else>
         <p class="evs__hint">
-          These apply to the whole view — every widget on it.
+          These apply to the whole panel — every widget on it.
         </p>
 
         <h4 class="evs__group">
@@ -429,7 +429,7 @@ export default {
         <input
           class="evs__field"
           :value="view ? view.name : ''"
-          aria-label="View name"
+          aria-label="Panel name"
           @input="$emit('set-name', $event.target.value)"
         >
 
@@ -478,14 +478,14 @@ export default {
         </div>
 
         <h4 class="evs__group">
-          This view
+          This panel
         </h4>
         <button
           class="btn btn-sm role-secondary evs__wide"
           :disabled="isDefault"
           @click="$emit('set-default')"
         >
-          {{ isDefault ? 'This is my default view' : 'Set as my default' }}
+          {{ isDefault ? 'This is my default panel' : 'Set as my default' }}
         </button>
         <button
           class="btn btn-sm role-secondary evs__wide"
@@ -497,7 +497,7 @@ export default {
           class="btn btn-sm role-link evs__wide evs__danger"
           @click="$emit('delete')"
         >
-          Delete view
+          Delete panel
         </button>
       </template>
     </div>

@@ -378,7 +378,7 @@ export default {
       </button>
       <button
         class="wnode__btn wnode__btn--danger"
-        title="Remove from view"
+        title="Remove from panel"
         @click.stop="viewEditor.remove(node.id)"
       >
         <i class="icon icon-close" />

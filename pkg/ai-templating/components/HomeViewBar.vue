@@ -169,7 +169,7 @@ export default {
           v-if="editing && view.id === activeId"
           class="vbar__name"
           :value="view.name"
-          aria-label="View name"
+          aria-label="Panel name"
           @input="onName"
         >
         <button
@@ -186,7 +186,7 @@ export default {
 
     <template v-if="editing">
       <i class="icon icon-edit vbar__pencil" />
-      <span class="vbar__mode">{{ isNew ? 'New view' : 'Editing' }}</span>
+      <span class="vbar__mode">{{ isNew ? 'New panel' : 'Editing' }}</span>
       <span class="vbar__hint">{{ editingHint }}</span>
 
       <button
@@ -201,7 +201,7 @@ export default {
         :disabled="saving"
         @click="$emit('save-as-new')"
       >
-        Save as new view
+        Save as new panel
       </button>
       <button
         class="btn role-primary vbar__btn"
@@ -215,8 +215,8 @@ export default {
     <template v-else>
       <button
         class="vbar__icon-btn"
-        title="Edit this view"
-        aria-label="Edit this view"
+        title="Edit this panel"
+        aria-label="Edit this panel"
         @click="$emit('edit')"
       >
         <i class="icon icon-edit" />
@@ -230,7 +230,7 @@ export default {
           class="vbar__icon-btn"
           :class="{ 'vbar__icon-btn--on': menuOpen }"
           title="More"
-          aria-label="More view actions"
+          aria-label="More panel actions"
           :aria-expanded="menuOpen ? 'true' : 'false'"
           @click="toggleMenu"
         >
@@ -243,12 +243,12 @@ export default {
         >
           <li>
             <button @click="run('new-view')">
-              New view
+              New panel
             </button>
           </li>
           <li>
             <button @click="run('duplicate')">
-              Duplicate this view
+              Duplicate this panel
             </button>
           </li>
           <li>
@@ -276,7 +276,7 @@ export default {
               :disabled="views.length < 2"
               @click="run('delete')"
             >
-              Delete view
+              Delete panel
             </button>
           </li>
         </ul>
