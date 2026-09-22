@@ -1,6 +1,11 @@
 /* eslint-disable */
 // Lazy registry of components for runtime-compiled custom-view SFCs.
 //
+// Every path here is resolved by webpack at BUILD time, so a path that does not exist in the
+// host's shell fails the whole build. That makes this list version-bound: it was generated
+// against @rancher/shell 3.0.13, and modules the shell has since moved or removed have to come
+// out. SearchDialog, edit/.../tabs/Ingress and utils/cspAdaptor went that way.
+//
 // @shell/components: exposed via require.context (sync) — mapped by ctx.keys() (lists only)
 // and executed on demand when the SFC imports one. Eager execution disrupts the app.
 //
@@ -175,7 +180,6 @@ var SHELL_MODULES = [
   ['@shell/dialog/RotateEncryptionKeyDialog', () => require('@shell/dialog/RotateEncryptionKeyDialog')],
   ['@shell/dialog/ScaleMachineDownDialog', () => require('@shell/dialog/ScaleMachineDownDialog')],
   ['@shell/dialog/ScalePoolDownDialog', () => require('@shell/dialog/ScalePoolDownDialog')],
-  ['@shell/dialog/SearchDialog', () => require('@shell/dialog/SearchDialog')],
   ['@shell/dialog/SloDialog', () => require('@shell/dialog/SloDialog')],
   ['@shell/dialog/UninstallExistingExtensionDialog', () => require('@shell/dialog/UninstallExistingExtensionDialog')],
   ['@shell/dialog/UninstallExtensionDialog', () => require('@shell/dialog/UninstallExtensionDialog')],
@@ -359,7 +363,6 @@ var SHELL_MODULES = [
   ['@shell/edit/provisioning.cattle.io.cluster/tabs/AgentConfiguration', () => require('@shell/edit/provisioning.cattle.io.cluster/tabs/AgentConfiguration')],
   ['@shell/edit/provisioning.cattle.io.cluster/tabs/Basics', () => require('@shell/edit/provisioning.cattle.io.cluster/tabs/Basics')],
   ['@shell/edit/provisioning.cattle.io.cluster/tabs/DirectoryConfig', () => require('@shell/edit/provisioning.cattle.io.cluster/tabs/DirectoryConfig')],
-  ['@shell/edit/provisioning.cattle.io.cluster/tabs/Ingress', () => require('@shell/edit/provisioning.cattle.io.cluster/tabs/Ingress')],
   ['@shell/edit/provisioning.cattle.io.cluster/tabs/MachinePool', () => require('@shell/edit/provisioning.cattle.io.cluster/tabs/MachinePool')],
   ['@shell/edit/provisioning.cattle.io.cluster/tabs/MemberRoles', () => require('@shell/edit/provisioning.cattle.io.cluster/tabs/MemberRoles')],
   ['@shell/edit/provisioning.cattle.io.cluster/tabs/etcd/S3Config', () => require('@shell/edit/provisioning.cattle.io.cluster/tabs/etcd/S3Config')],
@@ -742,7 +745,6 @@ var SHELL_MODULES = [
   ['@shell/utils/crypto/browserSha256', () => require('@shell/utils/crypto/browserSha256')],
   ['@shell/utils/crypto/encryption', () => require('@shell/utils/crypto/encryption')],
   ['@shell/utils/crypto', () => require('@shell/utils/crypto')],
-  ['@shell/utils/cspAdaptor', () => require('@shell/utils/cspAdaptor')],
   ['@shell/utils/custom-validators', () => require('@shell/utils/custom-validators')],
   ['@shell/utils/dom', () => require('@shell/utils/dom')],
   ['@shell/utils/download', () => require('@shell/utils/download')],
