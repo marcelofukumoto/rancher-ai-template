@@ -1,81 +1,76 @@
-<script>
+<script setup lang="ts">
+import { computed } from 'vue';
 import ResourceSummary from '@shell/components/ResourceSummary.vue';
 import { colorForState } from '@shell/plugins/dashboard-store/resource-class';
 import { ucFirst } from '@shell/utils/string';
 import WidgetCard from './WidgetCard.vue';
-import rows from './rows-mixin';
+import { useWidgetRows } from '../../composables/useWidgetRows';
 import { groupRows } from '../../templating/widget-data';
+import type { WidgetSpec } from '../../templating/types';
 
-// COUNTERS — "Numbers with labels, such as clusters by state".
-//
-// Each number is Rancher's own ResourceSummary: a SimpleBox with the number, its name, and amber
-// and red chips when some of what it counts is unhealthy. It is fed `spoofedCounts` rather than
-// left to count for itself, so it reports exactly what this widget's resource and filter selected.
-//
-// ResourceSummary specifically, and NOT CountGauge, which is prettier and has a ring: CountGauge is
-// dead code in the shell. Nothing imports it; the only mentions are a leftover variable named
-// `totalCountGaugeInput` which both the cluster explorer and SingleClusterInfo hand to
-// ResourceSummary. Building a widget on a component the product no longer renders means inheriting
-// no design updates and a deletion at some point. This is the card Rancher actually uses.
-//
-// The FIRST card is the total, and it is the one that carries the chips — "42 clusters, 3 of them
-// in trouble" is the shape of the question people actually ask. The rest are the groups.
-export default {
-  name:       'WidgetCounters',
-  components: { ResourceSummary, WidgetCard },
-  mixins:     [rows],
+/**
+ * Numbers with labels, each one Rancher's own ResourceSummary fed `spoofedCounts` so it reports
+ * exactly what this widget's resource and filter selected rather than counting for itself.
+ *
+ * ResourceSummary and not CountGauge: CountGauge is dead code in the shell — nothing imports it,
+ * and the only mentions are a leftover `totalCountGaugeInput` variable that is handed to
+ * ResourceSummary anyway.
+ */
+const props = defineProps<{ widget: WidgetSpec }>();
 
-  computed: {
-    // A plural noun for the total, taken from the resource's own schema so a CRD reads properly too.
-    totalLabel() {
-      const label = `${ this.schema?.attributes?.kind || this.widget.resource?.split('.').pop() || 'items' }`.toLowerCase();
+const {
+  rows, loading, error, schema
+} = useWidgetRows(() => props.widget);
 
-      return label.endsWith('s') ? label : `${ label }s`;
-    },
+/** A plural noun for the total, from the resource's own schema so a CRD reads properly too. */
+const totalLabel = computed(() => {
+  const label = `${ schema.value?.attributes?.kind || props.widget.resource?.split('.').pop() || 'items' }`.toLowerCase();
 
-    // How many of the rows are in a warning or an error state, by Rancher's own reckoning.
-    health() {
-      return this.rows.reduce((acc, row) => {
-        const color = colorForState(row.stateDisplay || row.state || '');
+  return label.endsWith('s') ? label : `${ label }s`;
+});
 
-        if (color === 'text-error') {
-          acc.errorCount += 1;
-        } else if (color === 'text-warning') {
-          acc.warningCount += 1;
-        }
+const health = computed(() => rows.value.reduce((acc, row) => {
+  const color = colorForState(row.stateDisplay || row.state || '');
 
-        return acc;
-      }, { warningCount: 0, errorCount: 0 });
-    },
+  if (color === 'text-error') {
+    acc.errorCount += 1;
+  } else if (color === 'text-warning') {
+    acc.warningCount += 1;
+  }
 
-    counters() {
-      const total = {
-        key:          '__total',
-        name:         this.totalLabel,
-        total:        this.rows.length,
-        useful:       this.rows.length - this.health.warningCount - this.health.errorCount,
-        warningCount: this.health.warningCount,
-        errorCount:   this.health.errorCount,
-      };
+  return acc;
+}, { warningCount: 0, errorCount: 0 }));
 
-      if (!this.widget.groupBy) {
-        return [total];
-      }
+/**
+ * The FIRST card is the total, and it carries the chips — "42 clusters, 3 of them in trouble" is
+ * the shape of the question people ask. The rest are the groups, which need no chip because a
+ * group IS one state.
+ */
+const counters = computed(() => {
+  const total = {
+    key:          '__total',
+    name:         totalLabel.value,
+    total:        rows.value.length,
+    useful:       rows.value.length - health.value.warningCount - health.value.errorCount,
+    warningCount: health.value.warningCount,
+    errorCount:   health.value.errorCount,
+  };
 
-      const groups = groupRows(this.rows, this.widget.groupBy).map((g) => ({
-        key:          g.label,
-        name:         ucFirst(g.label),
-        total:        g.count,
-        useful:       g.count,
-        // A group IS one state, so its own chip would just repeat its number.
-        warningCount: 0,
-        errorCount:   0,
-      }));
+  if (!props.widget.groupBy) {
+    return [total];
+  }
 
-      return [total, ...groups];
-    },
-  },
-};
+  const groups = groupRows(rows.value, props.widget.groupBy).map((g: { label: string; count: number }) => ({
+    key:          g.label,
+    name:         ucFirst(g.label),
+    total:        g.count,
+    useful:       g.count,
+    warningCount: 0,
+    errorCount:   0,
+  }));
+
+  return [total, ...groups];
+});
 </script>
 
 <template>
@@ -98,9 +93,8 @@ export default {
 .wcounters {
   display:               grid;
   gap:                   12px;
-  // ResourceSummary lays its number, name and chips out in ONE row (the cluster dashboard gives it
-  // a third of a full-width page). Below about 200px those collide, so that is the floor: a narrow
-  // widget stacks the cards, a wide one puts several across.
+  // ResourceSummary lays its number, name and chips out in ONE row, so below about 200px they
+  // collide: a narrow widget stacks the cards, a wide one puts several across.
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 
   :deep(.container) {

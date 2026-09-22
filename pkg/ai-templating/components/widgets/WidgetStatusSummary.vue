@@ -1,43 +1,42 @@
-<script>
+<script setup lang="ts">
+import { computed } from 'vue';
 import ProgressBarMulti from '@shell/components/ProgressBarMulti.vue';
 import { colorForState, stateSort } from '@shell/plugins/dashboard-store/resource-class';
 import { ucFirst } from '@shell/utils/string';
 import { sortBy } from '@shell/utils/sort';
 import WidgetCard from './WidgetCard.vue';
-import rows from './rows-mixin';
+import { useWidgetRows } from '../../composables/useWidgetRows';
 import { groupRows } from '../../templating/widget-data';
+import type { WidgetSpec } from '../../templating/types';
 
-// STATUS SUMMARY — "Items grouped by state".
-//
-// Drawn by Rancher's own ProgressBarMulti, the same component behind every state breakdown in the
-// product (FleetSummaryGraph, AppSummaryGraph, WorkloadHealthScale). The colours come from
-// `colorForState` and the ordering from `stateSort`, so "Error" is the same red here as everywhere
-// else and the worst states sort to the front — neither of which a hand-rolled bar would get right
-// for a state it had never been taught.
-export default {
-  name:       'WidgetStatusSummary',
-  components: { ProgressBarMulti, WidgetCard },
-  mixins:     [rows],
+/**
+ * Items grouped by state, drawn by Rancher's own ProgressBarMulti — the component behind every
+ * state breakdown in the product. `colorForState` and `stateSort` come with it, so "Error" is the
+ * same red here as everywhere else and the worst states sort to the front, which a hand-rolled bar
+ * would not get right for a state it had never been taught.
+ */
+const props = defineProps<{ widget: WidgetSpec }>();
 
-  computed: {
-    // ProgressBarMulti's shape: { label, color (a bg-* class), value }, worst first.
-    parts() {
-      const groups = groupRows(this.rows, this.widget.groupBy || 'state').map((g) => {
-        const textColor = colorForState(g.label);
+const {
+  rows, loading, error, emptyText
+} = useWidgetRows(() => props.widget);
 
-        return {
-          label: ucFirst(g.label),
-          color: textColor.replace(/text-/, 'bg-'),
-          textColor,
-          value: g.count,
-          sort:  stateSort(textColor, g.label),
-        };
-      });
+/** ProgressBarMulti's shape: { label, color (a bg-* class), value }, worst first. */
+const parts = computed(() => {
+  const groups = groupRows(rows.value, props.widget.groupBy || 'state').map((g: { label: string; count: number }) => {
+    const textColor = colorForState(g.label);
 
-      return sortBy(groups, 'sort:desc');
-    },
-  },
-};
+    return {
+      label: ucFirst(g.label),
+      color: textColor.replace(/text-/, 'bg-'),
+      textColor,
+      value: g.count,
+      sort:  stateSort(textColor, g.label),
+    };
+  });
+
+  return sortBy(groups, 'sort:desc');
+});
 </script>
 
 <template>

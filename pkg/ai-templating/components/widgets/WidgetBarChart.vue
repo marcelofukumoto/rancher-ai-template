@@ -1,27 +1,29 @@
-<script>
+<script setup lang="ts">
+import { computed } from 'vue';
 import WidgetCard from './WidgetCard.vue';
-import rows from './rows-mixin';
+import { useWidgetRows } from '../../composables/useWidgetRows';
 import { groupRows } from '../../templating/widget-data';
+import type { WidgetSpec } from '../../templating/types';
 
-// BAR CHART — "A resource grouped by one field".
-//
-// Horizontal bars, longest first, each scaled against the biggest group rather than the total: the
-// question this answers is "which version are most clusters on?", and relative length reads that
-// far better than a share-of-total bar would.
-export default {
-  name:       'WidgetBarChart',
-  components: { WidgetCard },
-  mixins:     [rows],
+/**
+ * A resource grouped by one field, as horizontal bars, longest first.
+ *
+ * Each bar is scaled against the BIGGEST group rather than the total: the question this answers is
+ * "which version are most clusters on?", and relative length reads that far better than a
+ * share-of-total bar would.
+ */
+const props = defineProps<{ widget: WidgetSpec }>();
 
-  computed: {
-    bars() {
-      const groups = groupRows(this.rows, this.widget.groupBy || 'state');
-      const max = groups[0]?.count || 1;
+const {
+  rows, loading, error, emptyText
+} = useWidgetRows(() => props.widget);
 
-      return groups.map((g) => ({ ...g, percent: (g.count / max) * 100 }));
-    },
-  },
-};
+const bars = computed(() => {
+  const groups = groupRows(rows.value, props.widget.groupBy || 'state');
+  const max = groups[0]?.count || 1;
+
+  return groups.map((g: { label: string; count: number }) => ({ ...g, percent: (g.count / max) * 100 }));
+});
 </script>
 
 <template>

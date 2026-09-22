@@ -1,36 +1,24 @@
-<script>
+<script setup lang="ts">
 import WidgetCard from './WidgetCard.vue';
-import rows from './rows-mixin';
+import { useWidgetRows } from '../../composables/useWidgetRows';
 import { fieldValue, stateColor } from '../../templating/widget-data';
+import type { ResourceRow, WidgetSpec } from '../../templating/types';
 
-// LIST — "A compact feed: alerts, events, commits".
-//
-// One line per row: a lead word (its state / type, coloured), the row's name, and whatever message
-// it carries. That is the shape of every feed on a dashboard, so the widget does not try to be
-// configurable beyond the resource, the filter and how many lines to show.
-export default {
-  name:       'WidgetList',
-  components: { WidgetCard },
-  mixins:     [rows],
+/**
+ * A compact feed: one line per row — a lead word (its state or type, coloured), the row's name and
+ * whatever message it carries. That is the shape of every feed on a dashboard, so this is not
+ * configurable beyond the resource, the filter and how many lines to show.
+ */
+const props = defineProps<{ widget: WidgetSpec }>();
 
-  methods: {
-    lead(row) {
-      return fieldValue(row, 'type') || fieldValue(row, 'state') || '';
-    },
+const {
+  rows, visibleRows, loading, error, emptyText
+} = useWidgetRows(() => props.widget);
 
-    leadColor(row) {
-      return stateColor(this.lead(row));
-    },
-
-    name(row) {
-      return fieldValue(row, 'name');
-    },
-
-    message(row) {
-      return fieldValue(row, 'message');
-    },
-  },
-};
+const lead = (row: ResourceRow) => fieldValue(row, 'type') || fieldValue(row, 'state') || '';
+const leadColor = (row: ResourceRow) => stateColor(lead(row));
+const name = (row: ResourceRow) => fieldValue(row, 'name');
+const message = (row: ResourceRow) => fieldValue(row, 'message');
 </script>
 
 <template>

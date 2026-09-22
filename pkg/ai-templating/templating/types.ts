@@ -1,3 +1,5 @@
+import type { RancherKubeMetadata } from '@shell/types/rancher/steve.api';
+
 /**
  * The shapes behind the configurable Home. These are the STORED contract — a view round-trips
  * through a ConfigMap, so changing a field name here changes what already-saved Homes mean.
@@ -130,6 +132,24 @@ export type Panel = LayoutPanel | StockPanel;
 export interface View {
   panels: Panel[];
   defaultPanelId?: string;
+}
+
+/**
+ * One resource instance as a widget sees it: a Steve model, so the raw fields plus whatever getters
+ * its model class adds. Indexed with `unknown` rather than `any`, so reading an untyped field is a
+ * deliberate cast at the call site instead of a silent hole.
+ */
+export interface ResourceRow {
+  id?: string;
+  type?: string;
+  metadata?: Partial<RancherKubeMetadata> & { creationTimestamp?: string; state?: { name?: string } };
+  spec?: Record<string, unknown>;
+  status?: Record<string, unknown>;
+  nameDisplay?: string;
+  stateDisplay?: string;
+  state?: string;
+  clusterName?: string;
+  [key: string]: unknown;
 }
 
 /** A widget inside a stored JSON template — a looser, older shape than WidgetSpec. */
