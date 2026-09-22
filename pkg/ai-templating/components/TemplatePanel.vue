@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue';
 import { useStore } from 'vuex';
+import TemplateCode from './TemplateCode.vue';
 import TemplateResourceList from './TemplateResourceList.vue';
 import WidgetOverview from './widgets/WidgetOverview.vue';
 import WidgetBanner from './widgets/WidgetBanner.vue';
@@ -20,18 +21,24 @@ const WIDGETS: Record<string, Component> = {
 const props = defineProps<{
   /** Name of a stored template ConfigMap. */
   name?: string;
-  /** Widgets to render directly, bypassing storage — used to preview an unsaved draft. */
+  /** SFC source to render directly, bypassing storage — used to preview an unsaved draft. */
+  source?: string | null;
+  /** Widgets to render directly, for the same reason. */
   widgets?: TemplateWidget[] | null;
 }>();
 
 const store = useStore();
 
 const resolved = computed(() => {
-  if (props.widgets) {
-    return { kind: 'json', widgets: props.widgets };
+  if (props.source || props.widgets) {
+    return {
+      kind: props.source ? 'code' : 'json', source: props.source || '', widgets: props.widgets || []
+    };
   }
 
-  return props.name ? templateByName(store.getters, props.name) : { kind: 'missing', widgets: [] };
+  return props.name ? templateByName(store.getters, props.name) : {
+    kind: 'missing', source: '', widgets: []
+  };
 });
 
 const widgetComp = (type: string): Component | null => WIDGETS[type] || null;
@@ -39,7 +46,13 @@ const widgetComp = (type: string): Component | null => WIDGETS[type] || null;
 
 <template>
   <div class="tpl-panel">
-    <template v-if="resolved.kind === 'json'">
+    <!-- Code template: a browser-compiled .vue owns the whole panel. -->
+    <TemplateCode
+      v-if="resolved.kind === 'code' && resolved.source"
+      :source="resolved.source"
+    />
+
+    <template v-else-if="resolved.kind === 'json'">
       <template
         v-for="(w, i) in resolved.widgets"
         :key="i"
@@ -57,13 +70,6 @@ const widgetComp = (type: string): Component | null => WIDGETS[type] || null;
         </div>
       </template>
     </template>
-
-    <div
-      v-else-if="resolved.kind === 'code'"
-      class="text-muted tpl-panel__msg"
-    >
-      "{{ name }}" is a code template. Those are no longer supported — rebuild it as widgets.
-    </div>
 
     <div
       v-else

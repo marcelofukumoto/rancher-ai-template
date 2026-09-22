@@ -4,17 +4,28 @@ import { useStore } from 'vuex';
 import { RcButton } from '@components/RcButton';
 import TemplatePanel from './TemplatePanel.vue';
 import HomeConfigChat from './HomeConfigChat.vue';
-import { templateByName, savedHomeTemplates, saveTemplateJson, fetchTemplatingConfigMaps } from '../templating/template-engine';
+import {
+  templateByName, savedHomeTemplates, saveHomeTemplate, saveTemplateJson, fetchTemplatingConfigMaps
+} from '../templating/template-engine';
 import type { TemplateWidget } from '../templating/types';
 
-const STARTER = JSON.stringify([{ type: 'banner', title: 'New block' }], null, 2);
+// Escaped closing tags so this SFC still parses.
+const STARTER_CODE = `<script>
+export default {};
+<\/script>
+<template>
+  <div style="padding: 24px">
+    <h1>New template</h1>
+  </div>
+<\/template>`;
+const STARTER_JSON = JSON.stringify([{ type: 'banner', title: 'New block' }], null, 2);
 const PREVIEW_DEBOUNCE = 300;
 
 const props = defineProps<{
   /** Name of the template ConfigMap being edited. */
   name: string;
-  /** True for a brand new template: start blank, and write nothing until Save. */
-  isNew?: boolean;
+  /** 'code' | 'json' marks a brand new template of that kind: start blank, write nothing until Save. */
+  newKind?: string | null;
   newDisplayName?: string;
 }>();
 
@@ -22,7 +33,8 @@ const emit = defineEmits<{(e: 'close'): void; (e: 'saved', name: string): void;}
 
 const store = useStore();
 
-const created = ref(!props.isNew);
+const created = ref(!props.newKind);
+const isJson = ref(false);
 const draft = ref('');
 const debouncedDraft = ref('');
 const savedDraft = ref('');
@@ -34,10 +46,14 @@ const split = ref<HTMLElement | null>(null);
 
 const asJson = (widgets: TemplateWidget[]) => JSON.stringify(widgets || [], null, 2);
 
-if (props.isNew) {
-  savedDraft.value = STARTER;
+if (props.newKind) {
+  isJson.value = props.newKind === 'json';
+  savedDraft.value = isJson.value ? STARTER_JSON : STARTER_CODE;
 } else {
-  savedDraft.value = asJson(templateByName(store.getters, props.name).widgets);
+  const resolved = templateByName(store.getters, props.name);
+
+  isJson.value = resolved.kind === 'json';
+  savedDraft.value = isJson.value ? asJson(resolved.widgets) : resolved.source;
 }
 draft.value = savedDraft.value;
 debouncedDraft.value = draft.value;
@@ -60,6 +76,10 @@ const parseWidgets = (text: string): TemplateWidget[] => {
 
 /** Empty while the JSON is invalid, so a half-typed edit does not blank the preview with an error. */
 const previewWidgets = computed(() => {
+  if (!isJson.value) {
+    return [];
+  }
+
   try {
     return parseWidgets(debouncedDraft.value);
   } catch {
@@ -68,7 +88,7 @@ const previewWidgets = computed(() => {
 });
 
 const jsonError = computed(() => {
-  if (!draft.value.trim()) {
+  if (!isJson.value || !draft.value.trim()) {
     return '';
   }
 
@@ -101,9 +121,15 @@ async function save() {
   status.value = '';
 
   try {
-    await saveTemplateJson(store, {
-      name: props.name, widgets: parseWidgets(draft.value), displayName: displayName.value
-    });
+    if (isJson.value) {
+      await saveTemplateJson(store, {
+        name: props.name, widgets: parseWidgets(draft.value), displayName: displayName.value
+      });
+    } else {
+      await saveHomeTemplate(store, {
+        name: props.name, source: draft.value, displayName: displayName.value
+      });
+    }
 
     savedDraft.value = draft.value;
     created.value = true;
@@ -121,7 +147,8 @@ async function save() {
 /** The AI agent wrote the ConfigMap — pull its content back into the editor. */
 async function onAgentApplied() {
   await fetchTemplatingConfigMaps(store);
-  const next = asJson(templateByName(store.getters, props.name).widgets);
+  const resolved = templateByName(store.getters, props.name);
+  const next = isJson.value ? asJson(resolved.widgets) : resolved.source;
 
   if (next) {
     draft.value = next;
@@ -167,7 +194,7 @@ function startResize(e: PointerEvent) {
         <i class="icon icon-chevron-left" /> Back
       </RcButton>
       <span class="tpl-editor__title">
-        {{ created ? 'Editing' : 'New' }} template <b>{{ displayName }}</b>
+        {{ created ? 'Editing' : 'New' }} {{ isJson ? 'JSON template' : 'template' }} <b>{{ displayName }}</b>
       </span>
       <RcButton
         variant="primary"
@@ -207,13 +234,20 @@ function startResize(e: PointerEvent) {
           v-model="draft"
           class="tpl-editor__code"
           spellcheck="false"
-          placeholder="[ { &quot;type&quot;: &quot;banner&quot;, &quot;title&quot;: &quot;Welcome&quot; } ]"
+          :placeholder="isJson ? '[ { &quot;type&quot;: &quot;banner&quot;, &quot;title&quot;: &quot;Welcome&quot; } ]' : ''"
         />
+        <!-- The Home JSON Builder for declarative widgets, the Home Editor for an SFC. -->
         <div class="tpl-editor__chat">
           <HomeConfigChat
+            v-if="isJson"
             :config-map-name="name"
             agent="template-home-json-builder"
             persona-label="Home JSON Builder"
+            @applied="onAgentApplied"
+          />
+          <HomeConfigChat
+            v-else
+            :config-map-name="name"
             @applied="onAgentApplied"
           />
         </div>
@@ -225,9 +259,21 @@ function startResize(e: PointerEvent) {
       />
       <div class="tpl-editor__preview">
         <TemplatePanel
+          v-if="isJson"
           :key="debouncedDraft.length"
           :widgets="previewWidgets"
         />
+        <TemplatePanel
+          v-else-if="debouncedDraft"
+          :key="debouncedDraft.length"
+          :source="debouncedDraft"
+        />
+        <div
+          v-else
+          class="text-muted p-20"
+        >
+          Nothing to preview.
+        </div>
       </div>
     </div>
   </div>

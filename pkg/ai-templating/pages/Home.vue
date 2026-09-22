@@ -79,7 +79,7 @@ export default {
       settingsNodeId:         null, // widget whose settings panel is open
       settingsAnchor:         null, // where that widget is on screen, so the panel opens beside it
       editingTemplate:        null, // stored template whose CONTENT is open in the split editor
-      editingTemplateNew:     false,
+      editingTemplateNewKind: null,
       editingTemplateNewName: '',
       saving:                 false,
       error:                  '',
@@ -804,14 +804,14 @@ export default {
     // ---- stored-template content editor --------------------------------------------------------
 
     openTemplateEditor(name) {
-      this.editingTemplateNew = false;
+      this.editingTemplateNewKind = null;
       this.editingTemplateNewName = '';
       this.editingTemplate = name;
     },
 
     async closeTemplateEditor() {
       this.editingTemplate = null;
-      this.editingTemplateNew = false;
+      this.editingTemplateNewKind = null;
       this.editingTemplateNewName = '';
       await fetchTemplatingConfigMaps(this.$store).catch(() => {});
     },
@@ -828,7 +828,7 @@ export default {
     <HomeTemplateEditor
       v-if="editingTemplate"
       :name="editingTemplate"
-      :is-new="editingTemplateNew"
+      :new-kind="editingTemplateNewKind"
       :new-display-name="editingTemplateNewName"
       @close="closeTemplateEditor"
     />
