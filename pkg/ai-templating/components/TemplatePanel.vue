@@ -1,85 +1,45 @@
-<script>
-import TemplateCode from './TemplateCode.vue';
+<script setup lang="ts">
+import { computed, type Component } from 'vue';
+import { useStore } from 'vuex';
 import TemplateResourceList from './TemplateResourceList.vue';
-import TemplateOverview from './widgets/WidgetOverview.vue';
+import WidgetOverview from './widgets/WidgetOverview.vue';
 import WidgetBanner from './widgets/WidgetBanner.vue';
 import WidgetLinks from './widgets/WidgetLinks.vue';
 import WidgetClusterTable from './widgets/WidgetClusterTable.vue';
 import { templateByName } from '../templating/template-engine';
+import type { TemplateWidget } from '../templating/types';
 
-// Renders ONE template as a dashboard panel, regardless of kind:
-//   - code template → a runtime-compiled .vue (TemplateCode)
-//   - JSON template → its declarative widgets, each dispatched to a widget renderer
-// Pass `name` to resolve a stored template, or `source`/`widgets` directly (used for live preview
-// of an unsaved draft).
-const WIDGETS = {
-  banner:       'WidgetBanner',
-  links:        'WidgetLinks',
-  clusterList:  'WidgetClusterTable',
-  resourceList: 'TemplateResourceList',
-  overview:     'TemplateOverview',
+const WIDGETS: Record<string, Component> = {
+  banner:       WidgetBanner,
+  links:        WidgetLinks,
+  clusterList:  WidgetClusterTable,
+  resourceList: TemplateResourceList,
+  overview:     WidgetOverview,
 };
 
-export default {
-  name:       'TemplatePanel',
-  components: {
-    TemplateCode, TemplateResourceList, TemplateOverview, WidgetBanner, WidgetLinks, WidgetClusterTable
-  },
+const props = defineProps<{
+  /** Name of a stored template ConfigMap. */
+  name?: string;
+  /** Widgets to render directly, bypassing storage — used to preview an unsaved draft. */
+  widgets?: TemplateWidget[] | null;
+}>();
 
-  props: {
-    name: {
-      type:    String,
-      default: '',
-    },
-    // Direct overrides for previewing a draft (bypass the stored template).
-    source: {
-      type:    String,
-      default: null,
-    },
-    widgets: {
-      type:    Array,
-      default: null,
-    },
-  },
+const store = useStore();
 
-  computed: {
-    resolved() {
-      if (this.source !== null || this.widgets !== null) {
-        return {
-          kind:    this.source ? 'code' : 'json',
-          source:  this.source || '',
-          widgets: this.widgets || [],
-        };
-      }
+const resolved = computed(() => {
+  if (props.widgets) {
+    return { kind: 'json', widgets: props.widgets };
+  }
 
-      if (this.name) {
-        return templateByName(this.$store.getters, this.name);
-      }
+  return props.name ? templateByName(store.getters, props.name) : { kind: 'missing', widgets: [] };
+});
 
-      return {
-        kind: 'missing', source: '', widgets: []
-      };
-    },
-  },
-
-  methods: {
-    widgetComp(type) {
-      return WIDGETS[type] || null;
-    },
-  },
-};
+const widgetComp = (type: string): Component | null => WIDGETS[type] || null;
 </script>
 
 <template>
   <div class="tpl-panel">
-    <!-- Code template: a runtime-compiled .vue owns the panel. -->
-    <TemplateCode
-      v-if="resolved.kind === 'code' && resolved.source"
-      :source="resolved.source"
-    />
-
-    <!-- JSON template: render each declarative widget. -->
-    <template v-else-if="resolved.kind === 'json'">
+    <template v-if="resolved.kind === 'json'">
       <template
         v-for="(w, i) in resolved.widgets"
         :key="i"
@@ -97,6 +57,13 @@ export default {
         </div>
       </template>
     </template>
+
+    <div
+      v-else-if="resolved.kind === 'code'"
+      class="text-muted tpl-panel__msg"
+    >
+      "{{ name }}" is a code template. Those are no longer supported — rebuild it as widgets.
+    </div>
 
     <div
       v-else

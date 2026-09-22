@@ -21,7 +21,8 @@ export const TYPE_HOME = 'home-template';
 export const TYPE_CONFIG = 'config';
 
 // ConfigMap data keys.
-export const SFC_KEY = 'view.vue'; // the Vue SFC (what the AI edits)
+// The key a code template stored its SFC under. Kept only to recognise (and refuse) those.
+export const SFC_KEY = 'view.vue';
 
 // The kill-switch ConfigMap (data.enabled only).
 export const CONFIG_NAME = 'templating-config';
@@ -131,40 +132,33 @@ export async function saveHomeConfig(store, home) {
 export function savedHomeTemplates(getters) {
   return cmsOfType(getters, TYPE_HOME).map((cm) => ({
     metadata: cm.metadata,
-    spec:     { displayName: cm.data?.displayName || cm.metadata?.name, source: cm.data?.[SFC_KEY] || cm.data?.source || '' },
+    spec:     { displayName: cm.data?.displayName || cm.metadata?.name },
   }));
 }
 
 /**
- * Resolve a template (by ConfigMap name) to what a TEMPLATE node needs to render it:
- *   - kind 'code' → a runtime-compiled SFC (`source`)
- *   - kind 'json' → a list of declarative `widgets` ({ type, ...config }) — the JSON template path
- * so a view can render either kind of template.
+ * Resolve a template (by ConfigMap name) to the declarative widgets a TEMPLATE node renders.
+ *
+ * `code` is a template written as a Vue SFC and compiled in the browser. That is no longer
+ * supported, but stored ones are still reported as such so the UI can say so rather than render
+ * an empty panel.
  */
 export function templateByName(getters, name) {
   const cm = cmById(getters, name);
 
   if (!cm) {
-    return {
-      kind: 'missing', source: '', widgets: []
-    };
+    return { kind: 'missing', widgets: [] };
   }
 
   const d = cm.data || {};
-  const kind = d.kind || 'code';
 
-  if (kind === 'code') {
-    return {
-      kind: 'code', source: d[SFC_KEY] || d.source || '', widgets: []
-    };
+  if (d[SFC_KEY] || d.source || d.kind === 'code') {
+    return { kind: 'code', widgets: [] };
   }
 
   const tpl = safeParse(d.template, null);
-  const widgets = tpl?.pages?.[0]?.widgets || tpl?.widgets || [];
 
-  return {
-    kind: 'json', source: '', widgets
-  };
+  return { kind: 'json', widgets: tpl?.pages?.[0]?.widgets || tpl?.widgets || [] };
 }
 
 /** Persist a JSON (widget) home template: data.kind='template', data.template={pages:[{widgets}]}. */
@@ -237,31 +231,6 @@ export async function fetchTemplatingConfigMaps(store) {
   const url = `/v1/configmaps?labelSelector=${ encodeURIComponent(`${ LABEL_MARKER }=true`) }`;
 
   return store.dispatch('management/findAll', { type: CONFIGMAP, opt: { url, force: true } }).catch(() => []);
-}
-
-/** Create-or-update a Home template ConfigMap (used by the Home editor). */
-export async function saveHomeTemplate(store, { name, source, displayName }) {
-  const existing = cmById(store.getters, name);
-  const data = { [SFC_KEY]: source || '', displayName: displayName || name };
-
-  if (existing && labelOf(existing, LABEL_TYPE) === TYPE_HOME) {
-    existing.data = { ...(existing.data || {}), ...data };
-    await existing.save();
-
-    return existing;
-  }
-
-  const cm = await store.dispatch('management/create', {
-    type:     CONFIGMAP,
-    metadata: {
-      name, namespace: TEMPLATE_NAMESPACE, labels: homeLabels
-    },
-    data,
-  });
-
-  await cm.save();
-
-  return cm;
 }
 
 /**
