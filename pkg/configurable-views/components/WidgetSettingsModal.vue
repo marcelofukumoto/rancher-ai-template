@@ -1,283 +1,303 @@
-<script>
-import { TABLE_COLUMNS, FIELDS, typeColumns, clusterOptions } from '../templating/widget-data';
+<script setup lang="ts">
 import {
-  SUGGESTED_RESOURCES, blockName, isDownstream, WIDGET_TABLE, WIDGET_LINKS,
-  WIDGET_BANNER, WIDGET_CLUSTER_TABLE, WIDGET_OVERVIEW
+  computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type CSSProperties
+} from 'vue';
+import { useStore } from 'vuex';
+import { useRoute } from 'vue-router';
+import { useI18n } from '@shell/composables/useI18n';
+import { MANAGEMENT, SCHEMA } from '@shell/config/types';
+import LabeledSelect from '@shell/components/form/LabeledSelect.vue';
+import { clusterOptions, fetchClusterSchemas, METRICS_DASHBOARDS } from '../templating/widget-data';
+import { newId } from '../templating/view-model';
+import { typeOptions, type TypeOption, type TypeSchema } from '../templating/resource-types';
+import {
+  blockLabelKey, isClusterWidget, WIDGET_TABLE, WIDGET_LINKS, WIDGET_BANNER, WIDGET_CLUSTER_TABLE, WIDGET_OVERVIEW,
+  WIDGET_TABS
 } from '../templating/widget-catalog';
+import { pageClusterOf } from '../composables/useWidgetCluster';
+import type { SettingsAnchor } from '../composables/viewEditor';
+import type { WidgetLink, WidgetSpec } from '../templating/types';
 
-// "What this widget shows" — the panel behind a widget's ⚙.
+// "What this widget shows" — the settings behind a widget's ⚙.
 //
 // IN PLACE, deliberately: it opens beside the widget it belongs to, over a page that stays lit,
 // because the thing you are describing is right there and you want to keep seeing it. A centred
 // modal over a dimmed page would hide exactly what you are configuring.
 //
 // It edits a COPY and only hands it back on Done, so Cancel really does leave the widget alone. The
-// fields shown depend on the building block: a table needs columns and a sort, a text note needs a
-// body, a links list needs links — asking a Text widget which columns to show would be nonsense.
-// Block names that are plural or mass nouns, where "what this <name> shows" does not read.
-const PLURAL_NAMES = ['links', 'counters'];
+// fields shown depend on the building block: a table needs where it reads from - Rancher, or a
+// cluster - and a resource there, and how much of the table views it shows - its columns, sort and filter
+// are set in the table itself; a links box needs links; a cluster widget needs only its cluster; a
+// Tabs widget needs its tabs.
 
-const PANEL_WIDTH = 400;
+// Building blocks with plural names, where "what this <name> shows" does not read.
+const PLURAL_KINDS = [WIDGET_LINKS, WIDGET_TABS];
+
+const DIALOG_WIDTH = 400;
 const MARGIN = 12;
 
-export default {
-  name: 'WidgetSettingsModal',
+/** One tickable column: an id, how it is labelled, and whether it can be sorted by. */
 
-  props: {
-    widget: {
-      type:     Object,
-      required: true,
-    },
-    // Where on screen the widget sits, so the panel can open next to it.
-    anchor: {
-      type:    Object,
-      default: null,
-    },
-  },
+const props = withDefaults(defineProps<{
+  widget: WidgetSpec;
+  /** Where on screen the widget sits, so the settings can open next to it. */
+  anchor?: SettingsAnchor | null;
+}>(), { anchor: null });
 
-  emits: ['done', 'cancel', 'remove'],
-
-  data() {
-    return {
-      // Measured after mount: the panel can only be placed well if we know how tall it really is.
-      panelHeight: 0,
-      draft:       JSON.parse(JSON.stringify(this.widget)),
-      resources:   SUGGESTED_RESOURCES,
-      fields:      FIELDS,
-    };
-  },
-
-  computed: {
-    /**
-     * Sit against the widget's left edge, and ALWAYS fully on screen.
-     *
-     * The anchor is where the widget is, and for a widget near the bottom of a long page that is a
-     * point with no room under it. So the panel is placed against the anchor and then pushed back
-     * up by however much of it would fall off the bottom — clamped last against the view bar, which
-     * holds Cancel and Save and has to stay reachable while this is open.
-     */
-    position() {
-      const a = this.anchor;
-      const bar = document.querySelector('.vbar');
-      const floor = bar ? Math.round(bar.getBoundingClientRect().bottom) + 8 : MARGIN;
-      const ceiling = Math.max(floor, window.innerHeight - (this.panelHeight || 420) - MARGIN);
-
-      if (!a) {
-        return {
-          left: '50%', top: `${ floor }px`, transform: 'translateX(-50%)'
-        };
-      }
-
-      return {
-        left: `${ Math.max(MARGIN, Math.min(a.left, window.innerWidth - PANEL_WIDTH - MARGIN)) }px`,
-        top:  `${ Math.max(floor, Math.min(a.top, ceiling)) }px`,
-      };
-    },
-
-    // "Clusters: what this table shows" — the widget's own title, then what kind of thing it is.
-    // A few block names are plural ("Links", "Counters") and do not fit that sentence, so those
-    // fall back to the generic noun rather than reading "what this links shows".
-    heading() {
-      const name = blockName(this.draft.kind);
-      const what = PLURAL_NAMES.includes(name.toLowerCase()) ? 'widget' : name.toLowerCase();
-
-      return `${ this.draft.title || name }: what this ${ what } shows`;
-    },
-
-    // Which sections apply to this building block.
-    readsData() {
-      return ![WIDGET_LINKS, WIDGET_BANNER, WIDGET_CLUSTER_TABLE, WIDGET_OVERVIEW].includes(this.draft.kind);
-    },
-
-    // The Home cluster table is the stock Home's own table — its columns, sorting and actions are
-    // fixed there, so there is nothing here to change but the heading.
-    titleOnly() {
-      return this.draft.kind === WIDGET_CLUSTER_TABLE;
-    },
-
-    hasColumns() {
-      return this.draft.kind === WIDGET_TABLE;
-    },
-
-    /**
-     * A Kubernetes type exists once per CLUSTER, so one has to be named before there is anything to
-     * show. Asking only for downstream types keeps the question off the widgets that do not have it
-     * — a Cluster or a User is global, there is nothing to pick.
-     *
-     * ONE cluster, not several: each is a separate API with its own paging, so a widget spanning
-     * two of them could not be paged at all. One cluster is what makes the table a real table.
-     */
-    needsClusters() {
-      return this.readsData && isDownstream(this.draft.resource);
-    },
-
-    clusters() {
-      return clusterOptions(this.$store.getters);
-    },
-
-    /**
-     * The columns on offer belong to the RESOURCE, not to this panel: a User has a username and a
-     * last login, a Cluster has a provider and a Kubernetes version. So the ticks are rebuilt from
-     * whatever type the picker is currently pointing at, and only a type Rancher describes nothing
-     * about falls back to the generic field list.
-     */
-    columns() {
-      const own = typeColumns(this.$store.getters, this.draft.resource);
-
-      return own.length ? own : TABLE_COLUMNS.map((c) => ({ ...c, sortable: true }));
-    },
-
-    /**
-     * And so do the fields you can sort from. A table sorts through the column itself, so it can
-     * only offer the ones the type says are sortable; a list sorts through this extension's own
-     * field readers, which is the generic list.
-     */
-    sortFields() {
-      if (this.draft.kind !== WIDGET_TABLE) {
-        return FIELDS;
-      }
-
-      const sortable = this.columns.filter((c) => c.sortable);
-
-      return sortable.length ? sortable : FIELDS;
-    },
-
-    hasSort() {
-      return this.draft.kind === WIDGET_TABLE;
-    },
-
-    // The suggested list, plus whatever this widget already points at (which may be a CRD that is
-    // not on the list) so the picker never silently drops it.
-    resourceOptions() {
-      const known = this.resources.some((r) => r.value === this.draft.resource);
-
-      return known || !this.draft.resource ? this.resources : [{ value: this.draft.resource, label: this.draft.resource }, ...this.resources];
-    },
-
-    // An overview summarises several types at once, edited as one type per line.
-    resourcesText: {
-      get() {
-        return (this.draft.resources || []).join('\n');
-      },
-      set(value) {
-        this.draft.resources = `${ value }`.split('\n').map((r) => r.trim()).filter(Boolean);
-      },
-    },
-
-    targetsText: {
-      get() {
-        return (this.draft.targets || []).join(', ');
-      },
-      set(value) {
-        this.draft.targets = `${ value }`.split(',').map((t) => t.trim()).filter(Boolean);
-      },
-    },
-
-    linksText: {
-      get() {
-        return (this.draft.links || []).map((l) => `${ l.label } ${ l.url }`).join('\n');
-      },
-      set(value) {
-        this.draft.links = `${ value }`.split('\n').map((line) => {
-          const at = line.trim().lastIndexOf(' ');
-
-          return at < 0 ? null : { label: line.trim().slice(0, at).trim(), url: line.trim().slice(at + 1).trim() };
-        }).filter((l) => l && l.label && l.url);
-      },
-    },
-  },
-
-  created() {
-    // A widget that has never been configured has no `columns`, and the table reads that as "show
-    // everything". Materialise it here so the ticks match what is actually drawn — otherwise the
-    // panel opens with nothing ticked beside a table showing every column, and ticking one box
-    // would read as "add a column" while actually dropping the other eight.
-    if (this.hasColumns && !this.draft.columns?.length) {
-      this.draft.columns = this.columns.map((c) => c.id);
-    }
-  },
-
-  mounted() {
-    // Escape closes it, like every other dialog in the product.
-    this.onKey = (ev) => {
-      if (ev.key === 'Escape') {
-        this.$emit('cancel');
-      }
-    };
-    window.addEventListener('keydown', this.onKey);
-
-    // Place it knowing its real height (see `position`), and keep it on screen if the window moves.
-    this.measure = () => {
-      this.panelHeight = this.$refs.dialog?.getBoundingClientRect().height || 0;
-    };
-    this.$nextTick(this.measure);
-    window.addEventListener('resize', this.measure);
-
-    // With no scrim there is nothing to click "through" to, so a click anywhere outside closes it.
-    // Deferred past this tick so the very click that opened it does not immediately close it.
-    this.onOutside = (ev) => {
-      if (!this.$el?.contains(ev.target)) {
-        this.$emit('cancel');
-      }
-    };
-    setTimeout(() => document.addEventListener('mousedown', this.onOutside), 0);
-  },
-
-  beforeUnmount() {
-    window.removeEventListener('keydown', this.onKey);
-    window.removeEventListener('resize', this.measure);
-    document.removeEventListener('mousedown', this.onOutside);
-  },
-
-  watch: {
-    /**
-     * Changing the type changes what a column even means — `user-id` is not a column a Cluster has —
-     * so the old ticks cannot carry over. Everything the new type has is ticked: you drop what you
-     * do not want, rather than hunt for what you do. A sort that no longer applies is cleared.
-     */
-    'draft.resource'(neu, old) {
-      if (neu === old) {
-        return;
-      }
-
-      this.draft.columns = this.columns.map((c) => c.id);
-
-      if (this.draft.sortBy && !this.sortFields.some((f) => f.id === this.draft.sortBy)) {
-        this.draft.sortBy = '';
-      }
-    },
-  },
-
-  methods: {
-    toggleColumn(id) {
-      const columns = [...(this.draft.columns || [])];
-      const at = columns.indexOf(id);
-
-      if (at >= 0) {
-        columns.splice(at, 1);
-      } else {
-        // Keep the canonical field order so the table reads the same however they were ticked.
-        columns.push(id);
-        columns.sort((a, b) => this.columns.findIndex((c) => c.id === a) - this.columns.findIndex((c) => c.id === b));
-      }
-
-      this.draft.columns = columns;
-    },
-
-    hasColumn(id) {
-      return (this.draft.columns || []).includes(id);
-    },
-
-  },
+type SettingsEmits = {
+  done: [widget: WidgetSpec];
+  cancel: [];
+  remove: [];
 };
+
+const emit = defineEmits<SettingsEmits>();
+
+const store = useStore();
+const { t } = useI18n(store);
+
+const root = ref<HTMLElement | null>(null);
+const dialog = ref<HTMLElement | null>(null);
+// Measured after mount: the dialog can only be placed well if we know how tall it really is.
+const dialogHeight = ref(0);
+const draft = reactive<WidgetSpec>(JSON.parse(JSON.stringify(props.widget)));
+
+/**
+ * Sit against the widget's left edge, and ALWAYS fully on screen.
+ *
+ * The anchor is where the widget is, and for a widget near the bottom of a long page that is a point
+ * with no room under it. So the dialog is placed against the anchor and then pushed back up by
+ * however much of it would fall off the bottom — clamped last against the view bar, which holds
+ * Cancel and Save and has to stay reachable while this is open.
+ */
+const position = computed<CSSProperties>(() => {
+  const a = props.anchor;
+  const bar = document.querySelector('.vbar');
+  const floor = bar ? Math.round(bar.getBoundingClientRect().bottom) + 8 : MARGIN;
+  const ceiling = Math.max(floor, window.innerHeight - (dialogHeight.value || 420) - MARGIN);
+
+  if (!a) {
+    return {
+      left: '50%', top: `${ floor }px`, transform: 'translateX(-50%)'
+    };
+  }
+
+  return {
+    left: `${ Math.max(MARGIN, Math.min(a.left, window.innerWidth - DIALOG_WIDTH - MARGIN)) }px`,
+    top:  `${ Math.max(floor, Math.min(a.top, ceiling)) }px`,
+  };
+});
+
+// "Clusters: what this table shows" — the widget's own title, then what kind of thing it is. A
+// plural block name ("Links") does not fit that sentence, so it falls back to the generic noun
+// rather than reading "what this links shows".
+const heading = computed(() => {
+  const key = blockLabelKey(draft.kind);
+  const name = key ? t(key) : draft.kind;
+
+  return PLURAL_KINDS.includes(draft.kind) ? t('configurableViews.widgetSettings.headingPlural', { title: draft.title || name }) : t('configurableViews.widgetSettings.heading', { title: draft.title || name, what: name.toLowerCase() });
+});
+
+// Which sections apply to this building block.
+const readsData = computed(() => ![WIDGET_LINKS, WIDGET_BANNER, WIDGET_CLUSTER_TABLE, WIDGET_OVERVIEW, WIDGET_TABS].includes(draft.kind) && !isClusterWidget(draft.kind));
+
+// The Home cluster table is the stock Home's own table — its columns, sorting and actions are fixed
+// there, so there is nothing here to change but the heading.
+const titleOnly = computed(() => draft.kind === WIDGET_CLUSTER_TABLE);
+
+const isTable = computed(() => draft.kind === WIDGET_TABLE);
+
+/**
+ * Where a table reads from, and which cluster a cluster widget shows - one field.
+ *
+ * A table reads Rancher's own API (its clusters, users and Fleet, and the local cluster's resources),
+ * or one cluster's: picking a cluster is what makes it a table of that cluster. A cluster widget is
+ * about one cluster, so it has no Rancher to pick.
+ *
+ * ONE cluster, not several: each is a separate API with its own paging, so a widget spanning two of
+ * them could not be paged at all. One cluster is what makes a table a real table.
+ */
+const needsClusters = computed(() => isTable.value || isClusterWidget(draft.kind));
+
+const clusters = computed(() => clusterOptions(store.getters));
+
+/** The Cluster field's value for "Rancher" - never a cluster's id, which has no colon. */
+const RANCHER = ':rancher';
+
+const where = computed({
+  get: () => (isTable.value && !draft.fromCluster ? RANCHER : draft.cluster),
+  set: (value: string) => {
+    if (isTable.value) {
+      draft.fromCluster = value !== RANCHER;
+    }
+    draft.cluster = value === RANCHER ? '' : value;
+  },
+});
+
+// ---- the Resource picker: every type where the table reads ----
+
+const route = useRoute();
+const typeSchemas = ref<TypeSchema[]>([]);
+const loadingTypes = ref(false);
+
+/**
+ * The schemas of where the table reads: Rancher's, or its cluster's.
+ *
+ * A table following the page on the Home has no cluster yet, so it is offered the local cluster's
+ * types - the Kubernetes ones are the same everywhere. A type only another cluster has can be typed.
+ */
+const typesFrom = computed(() => (draft.fromCluster ? draft.cluster || pageClusterOf(route) : ''));
+
+let typesAsked = 0;
+
+watch([readsData, typesFrom], async([reads, cluster]) => {
+  if (!reads) {
+    return;
+  }
+
+  const asked = ++typesAsked;
+  const local = () => store.getters['management/all'](SCHEMA) as TypeSchema[];
+
+  if (!cluster) {
+    typeSchemas.value = local();
+
+    return;
+  }
+
+  loadingTypes.value = true;
+
+  try {
+    const schemas = await fetchClusterSchemas(store, cluster);
+
+    if (asked === typesAsked) {
+      typeSchemas.value = schemas;
+    }
+  } catch {
+    if (asked === typesAsked) {
+      typeSchemas.value = local();
+    }
+  } finally {
+    if (asked === typesAsked) {
+      loadingTypes.value = false;
+    }
+  }
+}, { immediate: true });
+
+const resourceOptions = computed(() => typeOptions(typeSchemas.value, draft.resource));
+
+// A picked entry is its type; one typed in is the text itself, which the select hands back as a
+// `{ label }` of its own making, with no value.
+const typeOf = (option: Partial<TypeOption> | string): string => (typeof option === 'string' ? option : option.value ?? option.label ?? '');
+
+// One link per line, "Label https://url" - the URL is whatever follows the last space.
+const linksText = computed({
+  get: () => (draft.links || []).map((l) => `${ l.label } ${ l.url }`).join('\n'),
+  set: (value: string) => {
+    draft.links = `${ value }`.split('\n').map((line): WidgetLink | null => {
+      const at = line.trim().lastIndexOf(' ');
+
+      return at < 0 ? null : { label: line.trim().slice(0, at).trim(), url: line.trim().slice(at + 1).trim() };
+    }).filter((l): l is WidgetLink => !!l && !!l.label && !!l.url);
+  },
+});
+
+// ---- a Tabs widget's tabs ----
+// Only the tabs themselves are edited here - their names and order. What is IN a tab is edited on
+// the view, where it is drawn.
+
+function addTab(): void {
+  const tabs = draft.tabs || [];
+
+  draft.tabs = [...tabs, {
+    id: newId('tab'), name: t('configurableViews.widgetSettings.newTab', { index: tabs.length + 1 }), widgets: []
+  }];
+}
+
+function moveTab(index: number, delta: number): void {
+  const tabs = [...(draft.tabs || [])];
+  const to = index + delta;
+
+  if (to < 0 || to >= tabs.length) {
+    return;
+  }
+
+  const [moved] = tabs.splice(index, 1);
+
+  tabs.splice(to, 0, moved);
+  draft.tabs = tabs;
+}
+
+// A tab goes with what is in it; the button says so before it is pressed, and Cancel still undoes it.
+function removeTab(index: number): void {
+  draft.tabs = (draft.tabs || []).filter((_, i) => i !== index);
+}
+
+function removeTabLabel(count: number): string {
+  return count ? t('configurableViews.widgetSettings.removeTabWith', { count }) : t('configurableViews.widgetSettings.removeTab');
+}
+
+/**
+ * Load the clusters the picker offers, the moment it is shown.
+ *
+ * The picker reads them from the store, and nothing on the Home is obliged to have put them there -
+ * the cluster list pages, so it holds one page of them at most, and a Home without one holds none.
+ *
+ * Fetched here, not on every Home load: a picker of clusters needs all of them, but only while
+ * somebody is choosing one.
+ */
+watch(needsClusters, (needed) => {
+  if (needed) {
+    store.dispatch('management/findAll', { type: MANAGEMENT.CLUSTER }).catch(() => undefined);
+  }
+}, { immediate: true });
+
+// Escape closes it, like every other dialog in the product.
+function onKey(ev: KeyboardEvent): void {
+  if (ev.key === 'Escape') {
+    emit('cancel');
+  }
+}
+
+// Place it knowing its real height (see `position`), and keep it on screen if the window moves.
+function measure(): void {
+  dialogHeight.value = dialog.value?.getBoundingClientRect().height || 0;
+}
+
+// With no scrim there is nothing to click "through" to, so a click anywhere outside closes it.
+function onOutside(ev: MouseEvent): void {
+  const target = ev.target as HTMLElement | null;
+
+  // The Resource picker draws its list on the page's body, outside this dialog
+  if (target?.closest?.('.vs__dropdown-menu')) {
+    return;
+  }
+
+  if (!root.value?.contains(target)) {
+    emit('cancel');
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKey);
+  nextTick(measure);
+  window.addEventListener('resize', measure);
+  // Deferred past this tick so the very click that opened it does not immediately close it.
+  setTimeout(() => document.addEventListener('mousedown', onOutside), 0);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey);
+  window.removeEventListener('resize', measure);
+  document.removeEventListener('mousedown', onOutside);
+});
 </script>
 
 <template>
   <div
+    ref="root"
     class="wsm"
     :style="position"
     role="dialog"
-    aria-label="Widget settings"
+    :aria-label="t('configurableViews.widgetSettings.label')"
   >
     <div
       ref="dialog"
@@ -290,8 +310,8 @@ export default {
         </h3>
         <button
           class="wsm__close"
-          title="Close"
-          aria-label="Close"
+          :title="t('generic.close')"
+          :aria-label="t('generic.close')"
           @click="$emit('cancel')"
         >
           <i class="icon icon-close" />
@@ -299,7 +319,7 @@ export default {
       </header>
 
       <div class="wsm__body">
-        <label class="wsm__label">Title</label>
+        <label class="wsm__label">{{ t('configurableViews.widgetSettings.title') }}</label>
         <input
           v-model="draft.title"
           class="wsm__field"
@@ -308,70 +328,24 @@ export default {
           v-if="titleOnly"
           class="wsm__hint"
         >
-          This is the Home's own cluster table — its columns, sorting and buttons come with it.
+          {{ t('configurableViews.widgetSettings.clusterTableHint') }}
         </p>
 
-        <template v-if="readsData">
-          <label class="wsm__label">Resource</label>
+        <template v-if="needsClusters">
+          <label class="wsm__label">{{ t('configurableViews.widgetSettings.cluster') }}</label>
           <select
-            v-model="draft.resource"
+            v-model="where"
             class="wsm__field"
+            data-testid="configurable-views-widget-cluster"
           >
             <option
-              v-for="option in resourceOptions"
-              :key="option.value"
-              :value="option.value"
+              v-if="isTable"
+              :value="RANCHER"
             >
-              {{ option.label }}
+              {{ t('configurableViews.widgetSettings.rancher') }}
             </option>
-          </select>
-          <p class="wsm__hint">
-            Any kind Rancher knows, including your own CRDs.
-          </p>
-
-          <label class="wsm__label">Where</label>
-          <label class="wsm__radio">
-            <input
-              v-model="draft.where"
-              type="radio"
-              value="view"
-            >
-            Same as the panel (all clusters I can see)
-          </label>
-          <label class="wsm__radio">
-            <input
-              v-model="draft.where"
-              type="radio"
-              value="custom"
-            >
-            Only these clusters or namespaces
-          </label>
-          <input
-            v-if="draft.where === 'custom'"
-            v-model="targetsText"
-            class="wsm__field"
-            placeholder="prod-eu-1, prod-us-2"
-          >
-
-          <label class="wsm__label">Filter</label>
-          <input
-            v-model="draft.filter"
-            class="wsm__field"
-            placeholder="state != Active"
-          >
-          <p class="wsm__hint">
-            Labels or fields, such as env=prod or state != Active.
-          </p>
-        </template>
-
-        <template v-if="needsClusters">
-          <label class="wsm__label">Cluster</label>
-          <select
-            v-model="draft.cluster"
-            class="wsm__field"
-          >
             <option value="">
-              Choose a cluster…
+              {{ t('configurableViews.widgetSettings.pageCluster') }}
             </option>
             <option
               v-for="cluster in clusters"
@@ -382,98 +356,62 @@ export default {
             </option>
           </select>
           <p class="wsm__hint">
-            This type lives once per cluster, so a widget shows one of them. Each cluster is its own
-            API — rows from several could not be paged as one list.
+            {{ t(isTable ? 'configurableViews.widgetSettings.tableClusterHint' : 'configurableViews.widgetSettings.clusterHint') }}
           </p>
         </template>
 
-        <template v-if="hasColumns">
-          <label class="wsm__label">Columns</label>
-          <div class="wsm__columns">
-            <label
-              v-for="column in columns"
-              :key="column.id"
-            >
-              <input
-                type="checkbox"
-                :checked="hasColumn(column.id)"
-                @change="toggleColumn(column.id)"
-              >
-              {{ column.label }}
-            </label>
-          </div>
-          <p class="wsm__hint">
-            Columns appear in this order. Untick one to drop it from the table.
-          </p>
-        </template>
-
-        <template v-if="hasSort">
-          <label class="wsm__label">Sort by</label>
-          <div class="wsm__pair">
-            <select
-              v-model="draft.sortBy"
-              class="wsm__field"
-            >
-              <option value="">
-                Nothing
-              </option>
-              <option
-                v-for="field in sortFields"
-                :key="field.id"
-                :value="field.id"
-              >
-                {{ field.label }}
-              </option>
-            </select>
-            <select
-              v-model="draft.sortDir"
-              class="wsm__field"
-            >
-              <option value="asc">
-                Ascending
-              </option>
-              <option value="desc">
-                Descending
-              </option>
-            </select>
-          </div>
-        </template>
-
-        <template v-if="draft.kind === 'text'">
-          <label class="wsm__label">Text</label>
-          <textarea
-            v-model="draft.body"
-            class="wsm__field wsm__field--area"
-            rows="6"
+        <template v-if="readsData">
+          <label class="wsm__label">{{ t('configurableViews.widgetSettings.resource') }}</label>
+          <LabeledSelect
+            v-model:value="draft.resource"
+            class="wsm__select"
+            :options="resourceOptions"
+            :loading="loadingTypes"
+            :searchable="true"
+            :taggable="true"
+            :clearable="false"
+            :reduce="typeOf"
+            data-testid="configurable-views-widget-resource"
           />
           <p class="wsm__hint">
-            Markdown — headings, **bold**, lists and links all work.
+            {{ t('configurableViews.widgetSettings.resourceHint') }}
           </p>
         </template>
 
-        <template v-if="draft.kind === 'overview'">
-          <label class="wsm__label">Resources</label>
-          <textarea
-            v-model="resourcesText"
-            class="wsm__field wsm__field--area"
-            rows="5"
-            placeholder="pod"
-          />
+        <!-- Columns, sort, filter and grouping are the table views', set in the table itself -->
+        <template v-if="isTable">
+          <label class="wsm__label">{{ t('configurableViews.widgetSettings.views') }}</label>
+          <label class="wsm__radio">
+            <input
+              v-model="draft.viewTabs"
+              type="checkbox"
+              data-testid="configurable-views-table-view-tabs"
+            >
+            {{ t('configurableViews.widgetSettings.viewTabs') }}
+          </label>
+          <label class="wsm__radio">
+            <input
+              v-model="draft.ownViews"
+              type="checkbox"
+              :disabled="!draft.viewTabs"
+              data-testid="configurable-views-table-own-views"
+            >
+            {{ t('configurableViews.widgetSettings.ownViews') }}
+          </label>
           <p class="wsm__hint">
-            One type per line — pod, apps.deployment, batch.job. They are summarised together by
-            state, by type and by namespace.
+            {{ t('configurableViews.widgetSettings.viewsHint') }}
           </p>
         </template>
 
         <template v-if="draft.kind === 'links'">
-          <label class="wsm__label">Show</label>
+          <label class="wsm__label">{{ t('configurableViews.widgetSettings.show') }}</label>
           <label class="wsm__radio">
             <input
               v-model="draft.source"
               type="radio"
               value="home"
             >
-            Rancher's own links, as the Home shows them
+            {{ t('configurableViews.widgetSettings.linksHome') }}
           </label>
           <label class="wsm__radio">
             <input
@@ -481,14 +419,14 @@ export default {
               type="radio"
               value="custom"
             >
-            My own list
+            {{ t('configurableViews.widgetSettings.linksCustom') }}
           </label>
           <p class="wsm__hint">
-            Rancher's list follows the ui-custom-links setting, so it stays in step with the Home.
+            {{ t('configurableViews.widgetSettings.linksHomeHint') }}
           </p>
 
           <template v-if="draft.source === 'custom'">
-            <label class="wsm__label">Links</label>
+            <label class="wsm__label">{{ t('configurableViews.widgetSettings.links') }}</label>
             <textarea
               v-model="linksText"
               class="wsm__field wsm__field--area"
@@ -496,35 +434,94 @@ export default {
               placeholder="Runbook https://wiki.example.com/runbook"
             />
             <p class="wsm__hint">
-              One per line: the label, then the URL.
+              {{ t('configurableViews.widgetSettings.linksHint') }}
             </p>
           </template>
         </template>
 
-        <template v-if="draft.kind === 'timeSeries'">
-          <label class="wsm__label">Grafana panel URL</label>
-          <input
-            v-model="draft.url"
-            class="wsm__field"
-            placeholder="https://grafana.example.com/d-solo/abc/dashboard?panelId=2"
-          >
-          <p class="wsm__hint">
-            Take it from Grafana's Share → Embed on the panel you want.
-          </p>
-        </template>
-
         <template v-if="draft.kind === 'banner'">
-          <label class="wsm__label">Subtitle</label>
+          <label class="wsm__label">{{ t('configurableViews.widgetSettings.subtitle') }}</label>
           <input
             v-model="draft.subtitle"
             class="wsm__field"
           >
-          <label class="wsm__label">Background image</label>
+          <label class="wsm__label">{{ t('configurableViews.widgetSettings.image') }}</label>
           <input
             v-model="draft.image"
             class="wsm__field"
-            placeholder="Leave empty for the Rancher banner"
+            :placeholder="t('configurableViews.widgetSettings.imagePlaceholder')"
           >
+        </template>
+
+        <template v-if="draft.kind === 'clusterMetrics'">
+          <label class="wsm__label">{{ t('configurableViews.widgetSettings.dashboard') }}</label>
+          <select
+            v-model="draft.metrics"
+            class="wsm__field"
+          >
+            <option
+              v-for="(board, id) in METRICS_DASHBOARDS"
+              :key="id"
+              :value="id"
+            >
+              {{ t(board.labelKey) }}
+            </option>
+          </select>
+          <p class="wsm__hint">
+            {{ t('configurableViews.widgetSettings.dashboardHint') }}
+          </p>
+        </template>
+
+        <template v-if="draft.kind === 'tabs'">
+          <label class="wsm__label">{{ t('configurableViews.widgetSettings.tabs') }}</label>
+          <div
+            v-for="(tab, i) in draft.tabs"
+            :key="tab.id"
+            class="wsm__tabrow"
+          >
+            <input
+              v-model="tab.name"
+              class="wsm__field"
+              :aria-label="t('configurableViews.widgetSettings.tabName', { index: i + 1 })"
+            >
+            <button
+              class="wsm__icon"
+              :title="t('configurableViews.widgetSettings.moveLeft')"
+              :aria-label="t('configurableViews.widgetSettings.moveLeft')"
+              :disabled="i === 0"
+              @click="moveTab(i, -1)"
+            >
+              <i class="icon icon-chevron-left" />
+            </button>
+            <button
+              class="wsm__icon"
+              :title="t('configurableViews.widgetSettings.moveRight')"
+              :aria-label="t('configurableViews.widgetSettings.moveRight')"
+              :disabled="i === (draft.tabs || []).length - 1"
+              @click="moveTab(i, 1)"
+            >
+              <i class="icon icon-chevron-right" />
+            </button>
+            <button
+              class="wsm__icon wsm__icon--danger"
+              :title="removeTabLabel(tab.widgets.length)"
+              :aria-label="removeTabLabel(tab.widgets.length)"
+              :disabled="(draft.tabs || []).length < 2"
+              @click="removeTab(i)"
+            >
+              <i class="icon icon-close" />
+            </button>
+          </div>
+          <button
+            class="btn btn-sm role-tertiary wsm__add-tab"
+            @click="addTab"
+          >
+            <i class="icon icon-plus" />
+            {{ t('configurableViews.widgetSettings.addTab') }}
+          </button>
+          <p class="wsm__hint">
+            {{ t('configurableViews.widgetSettings.tabsHint') }}
+          </p>
         </template>
 
 
@@ -533,13 +530,13 @@ export default {
             class="btn btn-sm role-secondary"
             @click="$emit('remove')"
           >
-            Remove from panel
+            {{ t('configurableViews.widgetSettings.remove') }}
           </button>
           <button
             class="btn btn-sm role-primary"
             @click="$emit('done', draft)"
           >
-            Done
+            {{ t('generic.done') }}
           </button>
         </footer>
       </div>
@@ -657,6 +654,11 @@ export default {
     }
   }
 
+  // The Resource picker: the shell's searchable select, across the dialog like the fields around it
+  &__select {
+    width: 100%;
+  }
+
   &__hint {
     color:       var(--muted);
     font-size:   12px;
@@ -695,6 +697,50 @@ export default {
     display:               grid;
     gap:                   8px;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  // One row per tab: its name, then move left / right and remove.
+  &__tabrow {
+    align-items: center;
+    display:     flex;
+    gap:         4px;
+
+    .wsm__field {
+      flex: 1 1 auto;
+    }
+  }
+
+  &__icon {
+    align-items:     center;
+    background:      transparent;
+    border:          none;
+    color:           var(--body-text);
+    cursor:          pointer;
+    display:         flex;
+    font-size:       16px;
+    height:          24px;
+    justify-content: center;
+    min-height:      0;
+    padding:         0;
+    width:           24px;
+
+    &:hover:not(:disabled) {
+      color: var(--link);
+    }
+
+    &--danger:hover:not(:disabled) {
+      color: var(--error);
+    }
+
+    &:disabled {
+      cursor:  default;
+      opacity: 0.35;
+    }
+  }
+
+  &__add-tab {
+    align-self: flex-start;
+    gap:        6px;
   }
 
   &__foot {

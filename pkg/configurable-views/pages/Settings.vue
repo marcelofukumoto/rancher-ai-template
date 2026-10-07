@@ -1,63 +1,50 @@
-<script>
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue';
+import { useStore } from 'vuex';
+import { useI18n } from '@shell/composables/useI18n';
+import { useShell } from '@shell/apis';
+import { NotificationLevel } from '@shell/types/notifications';
 import { Checkbox } from '@components/Form/Checkbox';
 import { isTemplatingEnabled, toggleTemplating, fetchTemplatingConfigMaps } from '../templating/template-engine';
 
-// Configurable Views settings — the global kill switch for the custom Home. Always reachable (even
-// when off) so the feature can be turned back on. Views are stored as labeled ConfigMaps and
-// authored in the Home editor.
-export default {
-  name:       'ConfigurableViewsSettings',
-  components: { Checkbox },
+// Configurable Views settings — the global kill switch for the configurable pages. Always reachable
+// (even when off) so the feature can be turned back on.
 
-  async created() {
-    await fetchTemplatingConfigMaps(this.$store).catch(() => {});
-  },
+const store = useStore();
+const { t } = useI18n(store);
+const shell = useShell();
 
-  data() {
-    return { toggling: false };
-  },
+const toggling = ref(false);
 
-  computed: {
-    enabled() {
-      return isTemplatingEnabled(this.$store.getters);
-    },
-  },
+const enabled = computed(() => isTemplatingEnabled(store.getters));
 
-  methods: {
-    async onToggle(value) {
-      if (this.toggling) {
-        return;
-      }
-      this.toggling = true;
+onMounted(() => fetchTemplatingConfigMaps(store));
 
-      try {
-        const now = await toggleTemplating(this.$store, value);
+async function onToggle(value: boolean): Promise<void> {
+  if (toggling.value) {
+    return;
+  }
+  toggling.value = true;
 
-        this.$store.dispatch('growl/success', {
-          title:   'AI templating',
-          message: now ? 'Templating enabled.' : 'Templating disabled — showing stock Rancher.',
-        }, { root: true });
-      } catch (e) {
-        this.$store.dispatch('growl/error', {
-          title:   'Could not change templating',
-          message: e?.message || String(e),
-        }, { root: true });
-      } finally {
-        this.toggling = false;
-      }
-    },
-  },
-};
+  try {
+    const now = await toggleTemplating(store, value);
+
+    shell.notification.send(NotificationLevel.Success, t('configurableViews.toggle.title'), now ? t('configurableViews.toggle.turnedOn') : t('configurableViews.toggle.turnedOff'));
+  } catch (e) {
+    shell.notification.send(NotificationLevel.Error, t('configurableViews.toggle.failed'), (e as Error)?.message || String(e));
+  } finally {
+    toggling.value = false;
+  }
+}
 </script>
 
 <template>
   <div class="configurable-views-settings">
     <h1 class="mb-10">
-      Configurable Views
+      {{ t('configurableViews.toggle.title') }}
     </h1>
     <p class="text-muted mb-20">
-      The configurable Home is stored as labeled <code>ConfigMap</code>s and authored in the
-      <b>Home</b> editor.
+      {{ t('configurableViews.settings.intro') }}
     </p>
 
     <div
@@ -67,12 +54,11 @@ export default {
       <Checkbox
         :value="enabled"
         :disabled="toggling"
-        label="Custom Home templating enabled"
+        :label="t('configurableViews.settings.enabled')"
         @update:value="onToggle"
       />
       <p class="text-muted mt-5 mb-0">
-        When off, Rancher ignores every Home template and behaves like stock Rancher. This page stays
-        available so you can turn it back on.
+        {{ t('configurableViews.settings.enabledHint') }}
       </p>
     </div>
   </div>

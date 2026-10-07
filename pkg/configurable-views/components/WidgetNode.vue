@@ -1,326 +1,346 @@
-<script>
+<script setup lang="ts">
+import {
+  computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type CSSProperties
+} from 'vue';
+import { useStore } from 'vuex';
+import { useI18n } from '@shell/composables/useI18n';
 import WidgetHost from './widgets/WidgetHost.vue';
 import {
   GRID_COLUMNS, DEFAULT_GAP, cssSize, cssSides, normalizeSides, clampSpan
 } from '../templating/view-model';
+import type { GridCell } from '../templating/grid-layout';
+import { useViewEditor, type WidgetResize } from '../composables/viewEditor';
+import { useWidgetPresence } from '../composables/useWidgetPresence';
+import type { Sides, WidgetNode } from '../templating/types';
 
 // ONE widget on the grid.
 //
-// Its width is a COLUMN SPAN: the share of a 12-column line that has a GAP between every column, so
-// a span-s widget covers s columns plus the (s-1) gaps it swallows. Written out here rather than
-// handed to a CSS grid because the line is a flex line — which is what lets widgets wrap into rows
-// on their own, with no row objects to manage.
+// It is placed on the CELLS the grid works out for it (see grid-layout): its line, the column it
+// starts at and its COLUMN SPAN - s columns plus the (s-1) gaps it swallows. Its margin sits inside
+// those cells, so a margin never pushes a neighbour along.
 //
 // Outside edit mode this renders SEAMLESSLY — no chrome. In edit mode it wears its own header (that
 // header is how you drag it), and every piece of chrome is painted ABOVE the rendered widget, which
 // is stacking-isolated so its own z-indexes — sticky table headers, dropdowns — can never cover the
 // editor or steal its clicks.
-export default {
-  name:       'WidgetNode',
-  components: { WidgetHost },
 
-  inject: {
-    viewEditor: {
-      default: () => ({
-        select:     () => {},
-        remove:     () => {},
-        configure:  () => {},
-        beginDrag:  () => {},
-        endDrag:    () => {},
-        setColSpan: () => {},
-        ui:         { dragId: null, showBoxModel: false },
-      }),
-    },
-  },
+/** One strip of the padding band, and the side it stands for. */
+interface Band { side: keyof Sides; style: CSSProperties }
 
-  props: {
-    node: {
-      type:     Object,
-      required: true,
-    },
-    editing: {
-      type:    Boolean,
-      default: false,
-    },
-    selected: {
-      type:    Boolean,
-      default: false,
-    },
-    // The gap between widgets — one value for the whole VIEW.
-    gap: {
-      type:    Number,
-      default: DEFAULT_GAP,
-    },
-  },
+const props = withDefaults(defineProps<{
+  node: WidgetNode;
+  /** Where the grid puts it. */
+  cell?: GridCell | null;
+  editing?: boolean;
+  selected?: boolean;
+  /** A drop being dragged over the grid would move it over to make room. */
+  shifting?: boolean;
+  /** The gap between widgets — one value for the whole VIEW. */
+  gap?: number;
+}>(), {
+  cell:     null,
+  editing:  false,
+  selected: false,
+  shifting: false,
+  gap:      DEFAULT_GAP,
+});
 
-  data() {
-    return {
-      resizing:        false,
-      // Measured margin/padding in PX. The bands can't just reuse the authored values: a band is
-      // absolutely positioned, so a percentage on it resolves against THIS tile, while the real
-      // margin resolves against the line — a col-span-3 tile would draw the band 4x too small.
-      // getComputedStyle gives the used value in px, which is exact for %, rem, anything.
-      used:            null,
-      usedCardPadding: null,
-    };
-  },
+const viewEditor = useViewEditor();
+const store = useStore();
+const { t } = useI18n(store);
 
-  computed: {
+const root = ref<HTMLElement | null>(null);
+/** The edge being dragged, if one is. */
+const resizing = ref<'' | 'start' | 'end' | 'bottom'>('');
 
+/** The padding bands, placed over the card that carries the padding (see measurePadding). */
+const paddingBands = ref<Band[]>([]);
 
-    beingDragged() {
-      return this.viewEditor.ui?.dragId === this.node.id;
-    },
+const beingDragged = computed(() => viewEditor.ui.dragId === props.node.id);
 
-    span() {
-      return clampSpan(this.node.colSpan);
-    },
+// Outside the editor, a widget with nothing to show on its cluster is not drawn at all - as the
+// dashboard leaves out what a cluster does not have (see useWidgetPresence).
+const { present } = useWidgetPresence();
+const absent = computed(() => !props.editing && !present(props.node.widget));
 
-    margin() {
-      return normalizeSides(this.node.margin);
-    },
+// A widget that holds widgets (Tabs) stays live while editing: its tabs switch, and what is in them
+// is edited in place like anything else on the grid.
+const holdsWidgets = computed(() => !!props.node.widget.tabs);
+const span = computed(() => clampSpan(props.node.colSpan));
 
-    // The margin/padding bands answer "where do these pixels go?", which is only a question while
-    // you are typing pixels — so they are drawn only when the Layout tab's Advanced panel is open.
-    showBoxModel() {
-      return this.selected && !!this.viewEditor.ui?.showBoxModel;
-    },
+// The padding band answers "where do these pixels go?", so it is drawn for a moment after the
+// spacing changes, not all the time.
+const showBoxModel = computed(() => props.selected && viewEditor.ui.flashBox === 'padding');
 
-    style() {
-      // The span's share of a 12-column line that has a GAP between every column.
-      const gaps = (GRID_COLUMNS - 1) * this.gap;
-      const own = (this.span - 1) * this.gap;
-      // Subtract this widget's own horizontal margins from the basis, so basis + margins is exactly
-      // the span's share of the line and a margin never pushes a neighbour onto the next one.
-      const subtract = [this.margin.left, this.margin.right].filter((v) => v && v !== 0).map(cssSize);
-      const basis = `calc((100% - ${ gaps }px) * ${ this.span } / ${ GRID_COLUMNS } + ${ own }px${ subtract.length ? ` - ${ subtract.join(' - ') }` : '' })`;
+const style = computed<CSSProperties>(() => {
+  const cell = props.cell;
 
-      // PADDING is the room the content has INSIDE the card, not a ring around the widget — so it
-      // is handed to the card as custom properties rather than applied here. A widget is flush in
-      // its cell; only its margin and the view's gap separate it from its neighbours.
-      const p = normalizeSides(this.node.padding);
-      // The design's header is 12/16 — three quarters of the side inset, vertically — and its body
-      // hangs straight off the header with no gap. Scaling keeps that shape at every spacing.
-      const headV = Math.round(p.top * 0.75);
-      const headVBottom = Math.round(p.bottom * 0.75);
+  // PADDING is the room the content has INSIDE the card, not a ring around the widget — so it is
+  // handed to the card as custom properties rather than applied here. A widget is flush in its
+  // cell; only its margin and the view's gap separate it from its neighbours.
+  const p = normalizeSides(props.node.padding);
+  // The design's header is 12/16 — three quarters of the side inset, vertically — and its body
+  // hangs straight off the header with no gap. Scaling keeps that shape at every spacing.
+  const headV = Math.round(Number(p.top) * 0.75);
+  const headVBottom = Math.round(Number(p.bottom) * 0.75);
 
-      const s = {
-        boxSizing:          'border-box',
-        // min-width:0 is REQUIRED: a flex item defaults to min-width:auto and so refuses to shrink
-        // below its content's min-content width — a wide table would blow the line out past the page.
-        flex:               `0 0 ${ basis }`,
-        margin:             cssSides(this.node.margin),
-        minWidth:           0,
-        '--wcard-head-pad': `${ headV }px ${ p.right }px ${ headVBottom }px ${ p.left }px`,
-        '--wcard-head-min': `${ 32 + headV + headVBottom }px`,
-        '--wcard-body-pad': `0 ${ p.right }px ${ p.bottom }px ${ p.left }px`,
-        '--wcard-solo-pad': cssSides(this.node.padding),
-      };
+  const s: CSSProperties & Record<string, string | number> = {
+    boxSizing:          'border-box',
+    gridColumn:         cell ? `${ cell.col + 1 } / span ${ cell.span }` : `span ${ span.value }`,
+    margin:             cssSides(props.node.margin),
+    // min-width:0 is REQUIRED: a grid item defaults to min-width:auto and so refuses to shrink below
+    // its content's min-content width — a wide table would blow the line out past the page.
+    minWidth:           0,
+    '--wcard-head-pad': `${ headV }px ${ cssSize(p.right) } ${ headVBottom }px ${ cssSize(p.left) }`,
+    '--wcard-head-min': `${ 32 + headV + headVBottom }px`,
+    '--wcard-body-pad': `0 ${ cssSize(p.right) } ${ cssSize(p.bottom) } ${ cssSize(p.left) }`,
+    '--wcard-solo-pad': cssSides(props.node.padding),
+  };
 
-      const height = this.node.height;
+  if (cell) {
+    s.gridRow = `${ cell.line + 1 }`;
+  }
 
-      if (height && height !== 'auto') {
-        s.height = cssSize(height);
-        s.minHeight = 0;
-      }
+  const height = props.node.height;
 
-      return s;
-    },
+  if (height && height !== 'auto') {
+    s.height = cssSize(height);
+    s.minHeight = 0;
+  }
 
-    // ---- box-model bands (selected widget, Advanced open) ----
-    // Four strips per box, sized from the real values. The MARGIN sits outside the element (negative
-    // offsets), the PADDING inside it. Filled, no numbers — amber for margin, green for padding.
-    marginBands() {
-      return this.bandsFor(this.used?.margin, true);
-    },
+  return s;
+});
 
-    // Padding lives on the CARD now, so measure it there rather than on this wrapper.
-    paddingBands() {
-      return this.bandsFor(this.usedCardPadding, false);
-    },
-  },
+// ---- the padding band (selected widget, just after its spacing changed) ----
 
-  watch: {
-    showBoxModel: {
-      immediate: true,
-      handler() {
-        this.scheduleMeasure();
+/**
+ * Padding lives on the CARD, split between its parts: the head carries the top and the sides, the
+ * body the bottom - or the body alone, or a Tabs widget's panel, all four. Each side is read where
+ * it is applied, and the bands are placed over the card as it sits in this widget, below the
+ * editor's "Drag to move" strip.
+ */
+function measurePadding(el: HTMLElement): Band[] {
+  const box = el.querySelector<HTMLElement>('.wcard, .wtabs__panel');
+
+  if (!box) {
+    return [];
+  }
+
+  const n = (v: string) => Math.round((parseFloat(v) || 0) * 10) / 10;
+  const head = box.querySelector<HTMLElement>(':scope > .wcard__head');
+  const body = box.querySelector<HTMLElement>(':scope > .wcard__body');
+  const sides = getComputedStyle(head || body || box);
+  const ends = getComputedStyle(body || box);
+  const top = n(sides.paddingTop);
+  const bottom = n(ends.paddingBottom);
+  const left = n(sides.paddingLeft);
+  const right = n(sides.paddingRight);
+
+  const outer = el.getBoundingClientRect();
+  const r = box.getBoundingClientRect();
+  const x = r.left - outer.left;
+  const y = r.top - outer.top;
+  const px = (v: number) => `${ v }px`;
+  const out: Band[] = [];
+
+  if (top) {
+    out.push({
+      side:  'top',
+      style: {
+        top: px(y), left: px(x), width: px(r.width), height: px(top)
       },
-    },
-    'node.margin': {
-      deep: true,
-      handler() {
-        this.scheduleMeasure();
+    });
+  }
+  if (bottom) {
+    out.push({
+      side:  'bottom',
+      style: {
+        top: px(y + r.height - bottom), left: px(x), width: px(r.width), height: px(bottom)
       },
-    },
-    'node.padding': {
-      deep: true,
-      handler() {
-        this.scheduleMeasure();
+    });
+  }
+  if (left) {
+    out.push({
+      side:  'left',
+      style: {
+        top: px(y), left: px(x), width: px(left), height: px(r.height)
       },
-    },
-    'node.colSpan'() {
-      this.scheduleMeasure();
-    },
-  },
+    });
+  }
+  if (right) {
+    out.push({
+      side:  'right',
+      style: {
+        top: px(y), left: px(x + r.width - right), width: px(right), height: px(r.height)
+      },
+    });
+  }
 
-  mounted() {
-    // Re-measure when the element's own size changes (window resize, a neighbour resizing, …) so a
-    // percentage band keeps matching the real spacing.
-    if (typeof ResizeObserver !== 'undefined') {
-      this.ro = new ResizeObserver(() => this.measure());
-      this.ro.observe(this.$el);
+  return out;
+}
+
+// Read the USED padding (always px, whatever unit was authored) for the band.
+function measure(): void {
+  const el = root.value;
+
+  paddingBands.value = showBoxModel.value && el ? measurePadding(el) : [];
+}
+
+function scheduleMeasure(): void {
+  nextTick(measure);
+}
+
+watch(showBoxModel, scheduleMeasure, { immediate: true });
+watch(() => [props.node.margin, props.node.padding, props.node.colSpan], scheduleMeasure, { deep: true });
+
+// Re-measure when the element's own size changes (window resize, a neighbour resizing, …) so a
+// percentage band keeps matching the real spacing.
+let ro: ResizeObserver | null = null;
+
+onMounted(() => {
+  if (typeof ResizeObserver !== 'undefined' && root.value) {
+    ro = new ResizeObserver(measure);
+    ro.observe(root.value);
+  }
+});
+
+onBeforeUnmount(() => {
+  ro?.disconnect();
+  ro = null;
+});
+
+// A widget inside a Tabs widget is inside that widget's tile too, so the click is kept from reaching
+// the outer one - it would select the Tabs widget right after this one.
+function onSelect(ev: MouseEvent): void {
+  if (props.editing) {
+    ev.stopPropagation();
+    viewEditor.select(props.node.id);
+  }
+}
+
+// Hand the settings this widget's position so they open beside it rather than in the middle of
+// the screen — the whole point of settings "in place".
+function openSettings(): void {
+  const r = root.value?.getBoundingClientRect();
+
+  viewEditor.configure(props.node.id, r ? { left: Math.round(r.left), top: Math.round(r.top) } : null);
+}
+
+// ---- drag ----
+function onDragStart(ev: DragEvent): void {
+  if (!props.editing) {
+    return;
+  }
+  ev.stopPropagation();
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move';
+    // Firefox needs data set for a drag to start at all.
+    ev.dataTransfer.setData('text/plain', props.node.id);
+  }
+
+  // Where it was picked up stays under the pointer, so the drop lands where the widget is seen to be.
+  const r = root.value?.getBoundingClientRect();
+
+  viewEditor.beginDrag(props.node.id, r ? ev.clientX - r.left : undefined);
+}
+
+function onDragEnd(): void {
+  viewEditor.endDrag();
+}
+
+// ---- resizing by an edge ----
+// The right edge sets the span, the left edge where it starts (its right edge staying put), the
+// bottom its height. Widths snap to the columns; heights to HEIGHT_STEP px.
+const HEIGHT_STEP = 10;
+const MIN_HEIGHT = 60;
+
+// The badge shown while resizing: columns for a width, px for a height.
+const resizeBadge = computed(() => {
+  if (resizing.value === 'bottom') {
+    return cssSize(props.node.height);
+  }
+
+  return `${ span.value } / ${ GRID_COLUMNS }`;
+});
+
+function startResize(ev: PointerEvent, edge: 'start' | 'end' | 'bottom'): void {
+  if (!props.editing) {
+    return;
+  }
+  ev.preventDefault();
+  ev.stopPropagation();
+
+  const grid = root.value?.parentElement;
+  const box = root.value?.getBoundingClientRect();
+
+  if (!grid || !box) {
+    return;
+  }
+
+  // Column to column, gap included: twelve of these, less one gap, is the grid's width.
+  const pitch = (grid.getBoundingClientRect().width + props.gap) / GRID_COLUMNS;
+  const startX = ev.clientX;
+  const startY = ev.clientY;
+  const startSpan = span.value;
+  const startCol = props.cell?.col ?? 0;
+  let last = '';
+
+  // Selecting it makes the grid show its column guides while you drag the edge.
+  viewEditor.beginResize(props.node.id);
+  resizing.value = edge;
+
+  const onMove = (e: PointerEvent) => {
+    const columns = Math.round((e.clientX - startX) / pitch);
+    let change: WidgetResize;
+
+    if (edge === 'end') {
+      change = { span: clampSpan(startSpan + columns) };
+    } else if (edge === 'start') {
+      change = { start: startCol + columns };
+    } else {
+      change = { height: Math.max(MIN_HEIGHT, Math.round((box.height + e.clientY - startY) / HEIGHT_STEP) * HEIGHT_STEP) };
     }
-  },
 
-  beforeUnmount() {
-    this.ro?.disconnect();
-    this.ro = null;
-  },
+    // Only when it lands somewhere new: every change re-lays the whole list.
+    const key = JSON.stringify(change);
 
-  methods: {
-    // `outside` puts the strips beyond the element's edges (margin) rather than inside (padding).
-    bandsFor(box, outside) {
-      if (!box) {
-        return [];
-      }
+    if (key !== last) {
+      last = key;
+      viewEditor.resize(props.node.id, change);
+    }
+  };
 
-      const px = (v) => `${ outside ? -v : 0 }px`;
-      const out = [];
+  const onUp = () => {
+    resizing.value = '';
+    viewEditor.endResize();
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+  };
 
-      if (box.top) {
-        out.push({
-          top: px(box.top), left: px(box.left), right: px(box.right), height: `${ box.top }px`
-        });
-      }
-      if (box.bottom) {
-        out.push({
-          bottom: px(box.bottom), left: px(box.left), right: px(box.right), height: `${ box.bottom }px`
-        });
-      }
-      if (box.left) {
-        out.push({
-          top: 0, bottom: 0, left: px(box.left), width: `${ box.left }px`
-        });
-      }
-      if (box.right) {
-        out.push({
-          top: 0, bottom: 0, right: px(box.right), width: `${ box.right }px`
-        });
-      }
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
 
-      return out;
-    },
-
-    scheduleMeasure() {
-      this.$nextTick(() => this.measure());
-    },
-
-    // Read the USED margin/padding (always px, whatever unit was authored) for the band overlays.
-    measure() {
-      if (!this.showBoxModel || !this.$el?.getBoundingClientRect) {
-        this.used = null;
-        this.usedCardPadding = null;
-
-        return;
-      }
-
-      const cs = getComputedStyle(this.$el);
-      const n = (v) => Math.round((parseFloat(v) || 0) * 10) / 10;
-
-      const card = this.$el.querySelector('.wcard, .wtext');
-      const cardCs = card ? getComputedStyle(card) : null;
-
-      this.used = {
-        margin: {
-          top: n(cs.marginTop), right: n(cs.marginRight), bottom: n(cs.marginBottom), left: n(cs.marginLeft)
-        },
-      };
-      this.usedCardPadding = cardCs ? {
-        top: n(cardCs.paddingTop), right: n(cardCs.paddingRight), bottom: n(cardCs.paddingBottom), left: n(cardCs.paddingLeft)
-      } : null;
-    },
-
-    onSelect() {
-      if (this.editing) {
-        this.viewEditor.select(this.node.id);
-      }
-    },
-
-    // Hand the settings panel this widget's position so it opens beside it rather than in the
-    // middle of the screen — the whole point of settings "in place".
-    openSettings() {
-      const r = this.$el?.getBoundingClientRect?.();
-
-      this.viewEditor.configure(this.node.id, r ? { left: Math.round(r.left), top: Math.round(r.top) } : null);
-    },
-
-    // ---- drag ----
-    onDragStart(ev) {
-      if (!this.editing) {
-        return;
-      }
-      ev.stopPropagation();
-      ev.dataTransfer.effectAllowed = 'move';
-      // Firefox needs data set for a drag to start at all.
-      ev.dataTransfer.setData('text/plain', this.node.id);
-      this.viewEditor.beginDrag(this.node.id);
-    },
-
-    onDragEnd() {
-      this.viewEditor.endDrag();
-    },
-
-    // ---- col-span resize ----
-    startResize(ev) {
-      if (!this.editing) {
-        return;
-      }
-      ev.preventDefault();
-      ev.stopPropagation();
-      // Selecting it makes the grid show its column guides while you drag the edge.
-      this.viewEditor.select(this.node.id);
-
-      const lineEl = this.$el.parentElement;
-      const colWidth = lineEl ? lineEl.getBoundingClientRect().width / GRID_COLUMNS : 0;
-
-      if (!colWidth) {
-        return;
-      }
-
-      const startX = ev.clientX;
-      const startSpan = this.span;
-
-      this.resizing = true;
-
-      const onMove = (e) => {
-        const next = clampSpan(startSpan + Math.round((e.clientX - startX) / colWidth));
-
-        if (next !== this.span) {
-          this.viewEditor.setColSpan(this.node.id, next);
-        }
-      };
-
-      const onUp = () => {
-        this.resizing = false;
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-      };
-
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
-    },
-  },
-};
+// Double-clicking the bottom edge lets the content decide the height again.
+function fitHeight(): void {
+  if (props.editing) {
+    viewEditor.beginResize(props.node.id);
+    viewEditor.resize(props.node.id, { height: 'auto' });
+    viewEditor.endResize();
+  }
+}
 </script>
 
 <template>
   <div
+    v-show="!absent"
+    ref="root"
     class="wnode"
     :class="{
       'wnode--editing': editing,
       'wnode--selected': selected,
       'wnode--dragging': beingDragged,
+      'wnode--shifting': shifting,
     }"
     :style="style"
     :draggable="editing"
@@ -329,19 +349,13 @@ export default {
     @dragstart="onDragStart"
     @dragend="onDragEnd"
   >
-    <!-- Box model of the selected widget: amber margin outside, green padding inside. -->
+    <!-- The selected widget's padding, lit green as it changes -->
     <template v-if="showBoxModel">
       <div
-        v-for="(band, i) in marginBands"
-        :key="`m${ i }`"
-        class="wnode__band wnode__band--margin"
-        :style="band"
-      />
-      <div
-        v-for="(band, i) in paddingBands"
-        :key="`p${ i }`"
+        v-for="band in paddingBands"
+        :key="`p-${ band.side }`"
         class="wnode__band wnode__band--padding"
-        :style="band"
+        :style="band.style"
       />
     </template>
 
@@ -357,18 +371,18 @@ export default {
       class="wnode__bar"
     >
       <i class="wnode__grip icon icon-menu" />
-      <span class="wnode__label">Drag to move</span>
+      <span class="wnode__label">{{ t('configurableViews.widget.dragToMove') }}</span>
       <span class="wnode__bar-gap" />
       <button
         class="wnode__btn"
-        title="What this widget shows"
+        :title="t('configurableViews.widget.settings')"
         @click.stop="openSettings"
       >
         <i class="icon icon-gear" />
       </button>
       <button
         class="wnode__btn wnode__btn--danger"
-        title="Remove from panel"
+        :title="t('configurableViews.widget.remove')"
         @click.stop="viewEditor.remove(node.id)"
       >
         <i class="icon icon-close" />
@@ -376,26 +390,48 @@ export default {
     </div>
 
     <div class="wnode__content">
-      <WidgetHost :widget="node.widget" />
+      <WidgetHost
+        :widget="node.widget"
+        :node-id="node.id"
+        :gap="gap"
+      />
     </div>
 
     <!-- Makes the live widget inert while editing, so a drag starts on the tile, not inside it. -->
     <div
-      v-if="editing"
+      v-if="editing && !holdsWidgets"
       class="wnode__shield"
     />
-    <div
-      v-if="editing"
-      class="wnode__resize"
-      :class="{ 'wnode__resize--active': resizing }"
-      title="Drag to resize by columns"
-      @pointerdown="startResize"
-    />
+    <template v-if="editing">
+      <div
+        class="wnode__resize wnode__resize--start"
+        :class="{ 'wnode__resize--active': resizing === 'start' }"
+        :title="t('configurableViews.widget.resizeStart')"
+        data-testid="configurable-views-resize-start"
+        @pointerdown="startResize($event, 'start')"
+      />
+      <div
+        class="wnode__resize wnode__resize--end"
+        :class="{ 'wnode__resize--active': resizing === 'end' }"
+        :title="t('configurableViews.widget.resize')"
+        data-testid="configurable-views-resize-end"
+        @pointerdown="startResize($event, 'end')"
+      />
+      <div
+        class="wnode__resize wnode__resize--bottom"
+        :class="{ 'wnode__resize--active': resizing === 'bottom' }"
+        :title="t('configurableViews.widget.resizeHeight')"
+        data-testid="configurable-views-resize-bottom"
+        @pointerdown="startResize($event, 'bottom')"
+        @dblclick.stop="fitHeight"
+      />
+    </template>
     <div
       v-if="resizing"
       class="wnode__span"
+      :class="{ 'wnode__span--height': resizing === 'bottom' }"
     >
-      {{ span }} / 12
+      {{ resizeBadge }}
     </div>
   </div>
 </template>
@@ -416,6 +452,18 @@ export default {
     opacity: 0.4;
   }
 
+  // A widget with a menu open in it - the table views' View menu - sits above its neighbours, so the
+  // menu is not painted under the widget beside or below it (see __content).
+  &:has(.v-popper__popper--shown) {
+    z-index: 1;
+  }
+
+  // A drop over the grid would move it over: say so before it happens.
+  &--shifting > .wnode__frame {
+    border:     2px dashed var(--primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+  }
+
   // ---- frame ----
   &__frame {
     border:         1px dashed var(--primary);
@@ -430,7 +478,7 @@ export default {
   // weight, plus a soft ring, so nothing on the grid shifts by a pixel when you click it.
   &--selected > &__frame {
     border-style: solid;
-    box-shadow:   0 0 0 2px var(--accent-btn);
+    box-shadow:   0 0 0 2px color-mix(in srgb, var(--primary) 12%, transparent);
   }
 
   // ---- box-model bands ----
@@ -438,10 +486,6 @@ export default {
     pointer-events: none;
     position:       absolute;
     z-index:        3;
-  }
-
-  &__band--margin {
-    background: rgba(247, 181, 0, 0.35);
   }
 
   &__band--padding {
@@ -516,11 +560,24 @@ export default {
 
   // Traps the rendered widget's stacking context at level 0, so its own z-indexes can't cover the
   // editor chrome (and steal its clicks).
+  // Kept to its cells: a widget wider than them - a table with many columns in a narrow tile, or in
+  // a tab - scrolls sideways inside itself rather than running over its neighbours.
   &__content {
-    height:    100%;
-    isolation: isolate;
-    position:  relative;
-    z-index:   0;
+    height:     100%;
+    isolation:  isolate;
+    overflow-x: auto;
+    overflow-y: hidden;
+    position:   relative;
+    z-index:    0;
+
+    // A menu opened in the widget is drawn FIXED, so it is neither cut off at the widget's edges nor
+    // counted in its scroll width. Drawn absolute, a submenu opening past the edge widened the widget
+    // for a frame, the browser scrolled the widget to the focused submenu, the table jumped, and the
+    // menu flickered on every hover. The menu library places a fixed menu against the window, which
+    // is where the page is: Rancher scrolls its <main>, not the window.
+    :deep(.v-popper__popper) {
+      position: fixed !important;
+    }
   }
 
   &__shield {
@@ -529,29 +586,68 @@ export default {
     z-index:  2;
   }
 
+  // The edges you drag to resize: left and right by columns, bottom by height.
   &__resize {
-    bottom:   0;
-    cursor:   col-resize;
     position: absolute;
-    right:    0;
-    top:      0;
-    width:    8px;
     z-index:  5;
 
     &::after {
       background:    var(--border);
       border-radius: 2px;
-      bottom:        6px;
       content:       '';
       position:      absolute;
-      right:         2px;
-      top:           6px;
-      width:         3px;
     }
 
     &:hover::after,
     &--active::after {
       background: var(--primary);
+    }
+
+    &--start,
+    &--end {
+      bottom: 0;
+      cursor: col-resize;
+      top:    0;
+      width:  8px;
+
+      &::after {
+        bottom: 6px;
+        top:    6px;
+        width:  3px;
+      }
+    }
+
+    &--start {
+      left: 0;
+
+      &::after {
+        left: 2px;
+      }
+    }
+
+    &--end {
+      right: 0;
+
+      &::after {
+        right: 2px;
+      }
+    }
+
+    // Straddles the bottom edge - 12px in, 12px out into the gap - so it is caught without aiming
+    // for a hairline. The bar you see stays on the widget.
+    &--bottom {
+      bottom: -12px;
+      cursor: row-resize;
+      height: 24px;
+      left:   8px;
+      right:  8px;
+
+      &::after {
+        bottom: 14px;
+        height: 3px;
+        left:   calc(50% - 20px);
+        width:  40px;
+      }
     }
   }
 
@@ -567,6 +663,11 @@ export default {
     position:       absolute;
     right:          10px;
     z-index:        6;
+
+    &--height {
+      bottom: 12px;
+      right:  calc(50% - 24px);
+    }
   }
 }
 </style>

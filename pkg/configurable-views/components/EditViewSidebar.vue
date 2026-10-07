@@ -1,180 +1,275 @@
-<script>
+<script setup lang="ts">
+import { computed, onBeforeUnmount, ref } from 'vue';
+import { useStore } from 'vuex';
+import { useI18n } from '@shell/composables/useI18n';
+import Tabbed from '@shell/components/Tabbed/index.vue';
+import Tab from '@shell/components/Tabbed/Tab.vue';
 import CatalogTile from './CatalogTile.vue';
-import { BUILDING_BLOCKS, READY_MADE, searchCatalog, blockName } from '../templating/widget-catalog';
 import {
-  NODE_WIDGET, WIDTH_PRESETS, HEIGHT_PRESETS, SPACING_PRESETS, COLUMN_SPANS,
+  BUILDING_BLOCKS, READY_MADE, searchCatalog, blockLabelKey, type CatalogEntry
+} from '../templating/widget-catalog';
+import {
+  WIDTH_PRESETS, HEIGHT_PRESETS, SPACING_PRESETS,
   DEFAULT_GAP, DEFAULT_PAGE_PADDING, widthPresetOf, heightPresetOf, spacingPresetOf
 } from '../templating/view-model';
+import type { View, WidgetNode } from '../templating/types';
 
 // The "Edit view" drawer. Three tabs, and the split between them is the point:
 //
 //   ADD     what goes on the grid — building blocks (a shape, you say what it shows) and
 //           ready-made widgets (the same shapes with their data already chosen).
-//   LAYOUT  how the SELECTED widget sits — width, height, spacing, and exact pixels under Advanced.
-//   VIEW    what is true of the WHOLE view — its name, its gap, whether it is your default.
+//   LAYOUT  how the SELECTED widget sits — width, height and spacing.
+//   VIEW   what is true of the WHOLE view — its name, its gap, whether it is your default.
 //
-// Everything is emitted; the drawer holds only its own tab, search box and Advanced toggle.
-export default {
-  name:       'EditViewSidebar',
-  components: { CatalogTile },
+// Everything is emitted; the drawer holds only its own tab and search box.
 
-  props: {
-    // The view being edited (a panel).
-    view: {
-      type:    Object,
-      default: null,
-    },
-    // The node the Layout tab acts on (null when nothing is selected).
-    selected: {
-      type:    Object,
-      default: null,
-    },
-    isDefault: {
-      type:    Boolean,
-      default: false,
-    },
-    // A view that has never been saved shows its starting points instead of jumping straight to
-    // the catalog — the first decision is what it should be ABOUT.
-    isNew: {
-      type:    Boolean,
-      default: false,
-    },
-    startedFrom: {
-      type:    String,
-      default: '',
-    },
-    startingPoints: {
-      type:    Array,
-      default: () => [],
-    },
-    // Rancher's own Home, kept as a view. There is no grid behind it, so there is nothing to add
-    // to it and nothing to lay out.
-    isStock: {
-      type:    Boolean,
-      default: false,
-    },
-  },
+/** A view a new one can start as a copy of. */
+export interface StartingPoint {
+  id: string;
+  label: string;
+}
 
-  emits: [
-    'close', 'add', 'drag-start', 'drag-end', 'set-width', 'set-height', 'set-spacing',
-    'set-box', 'set-col-span', 'set-gap', 'set-name', 'set-default', 'publish', 'delete',
-    'start-from', 'advanced', 'set-page-padding'
-  ],
-
-  data() {
-    return {
-      tab:          'add',
-      search:       '',
-      advancedOpen: false,
-      widths:       WIDTH_PRESETS,
-      heights:      HEIGHT_PRESETS,
-      spacings:     SPACING_PRESETS,
-      columnSpans:  COLUMN_SPANS,
-      sides:        ['top', 'right', 'bottom', 'left'],
-    };
-  },
-
-  computed: {
-    blocks() {
-      return searchCatalog(BUILDING_BLOCKS, this.search);
-    },
-
-    readyMade() {
-      return searchCatalog(READY_MADE, this.search);
-    },
-
-    gap() {
-      return this.view?.gap ?? DEFAULT_GAP;
-    },
-
-    pagePadding() {
-      return this.view?.pad ?? DEFAULT_PAGE_PADDING;
-    },
-
-    // "Selected: Clusters (Table)" — the widget's own title, then which building block it is.
-    selectedLabel() {
-      if (!this.selected) {
-        return '';
-      }
-      if (this.selected.type !== NODE_WIDGET) {
-        return `${ this.selected.template } (Template)`;
-      }
-
-      const widget = this.selected.widget;
-
-      return `${ widget.title || blockName(widget.kind) } (${ blockName(widget.kind) })`;
-    },
-
-    widthPreset() {
-      return this.selected ? widthPresetOf(this.selected.colSpan) : null;
-    },
-
-    heightPreset() {
-      return this.selected ? heightPresetOf(this.selected.height, this.gap) : null;
-    },
-
-    spacingPreset() {
-      return this.selected ? spacingPresetOf(this.selected.padding) : null;
-    },
-  },
-
-  methods: {
-    // The canvas draws the margin/padding bands while this is open, so the numbers being typed
-    // have something to point at.
-    toggleAdvanced() {
-      this.advancedOpen = !this.advancedOpen;
-      this.$emit('advanced', this.advancedOpen);
-    },
-
-    sideLabel(side) {
-      return side.charAt(0).toUpperCase() + side.slice(1);
-    },
-  },
+type SidebarEmits = {
+  close: [];
+  add: [entry: CatalogEntry];
+  'drag-start': [entry: CatalogEntry, event: DragEvent];
+  'drag-end': [];
+  'set-width': [span: number];
+  'set-height': [preset: string];
+  'set-spacing': [preset: string];
+  'set-gap': [value: string];
+  'set-page-padding': [value: string];
+  'set-name': [name: string];
+  'set-default': [];
+  publish: [];
+  delete: [];
+  /** '' starts from nothing. */
+  'start-from': [viewId: string];
 };
+
+const props = withDefaults(defineProps<{
+  /** The view being edited. */
+  view?: View | null;
+  /** The widget the Layout tab acts on (null when nothing is selected). */
+  selected?: WidgetNode | null;
+  isDefault?: boolean;
+  /**
+   * A view that has never been saved shows its starting points instead of jumping straight to the
+   * catalog — the first decision is what it should be ABOUT.
+   */
+  isNew?: boolean;
+  startedFrom?: string;
+  startingPoints?: StartingPoint[];
+  /**
+   * The page's own stock content, kept as a view. There is no grid behind it, so there is nothing to add to it
+   * and nothing to lay out.
+   */
+  isStock?: boolean;
+}>(), {
+  view:           null,
+  selected:       null,
+  isDefault:      false,
+  isNew:          false,
+  startedFrom:    '',
+  startingPoints: () => [],
+  isStock:        false,
+});
+
+defineEmits<SidebarEmits>();
+
+const store = useStore();
+const { t } = useI18n(store);
+
+const TABS = [
+  { id: 'add', labelKey: 'configurableViews.sidebar.tabs.add' },
+  { id: 'layout', labelKey: 'configurableViews.sidebar.tabs.layout' },
+  { id: 'view', labelKey: 'configurableViews.sidebar.tabs.view' },
+];
+
+// ---- the drawer's width, dragged from its left edge ----
+
+const DRAWER_WIDTH_KEY = 'configurable-views-drawer-width';
+const DRAWER_MIN = 320;
+const DRAWER_DEFAULT = 380;
+const DRAWER_STEP = 20;
+
+/** Up to 60% of the window, so the grid beside it always keeps some room. */
+const drawerMax = () => Math.max(DRAWER_MIN, Math.round(window.innerWidth * 0.6));
+
+const clampWidth = (px: number) => Math.min(Math.max(Math.round(px), DRAWER_MIN), drawerMax());
+
+function readWidth(): number {
+  try {
+    const stored = Number(window.localStorage.getItem(DRAWER_WIDTH_KEY));
+
+    return stored ? clampWidth(stored) : DRAWER_DEFAULT;
+  } catch {
+    return DRAWER_DEFAULT;
+  }
+}
+
+/** Per browser, like the bar's own visibility. */
+const drawerWidth = ref(readWidth());
+
+function keepWidth(): void {
+  try {
+    window.localStorage.setItem(DRAWER_WIDTH_KEY, String(drawerWidth.value));
+  } catch {
+    // Kept for this page load only
+  }
+}
+
+let resizeFrom: { x: number, width: number } | null = null;
+
+function onResizeMove(ev: MouseEvent): void {
+  if (resizeFrom) {
+    // The drawer is on the right, so dragging left widens it
+    drawerWidth.value = clampWidth(resizeFrom.width + resizeFrom.x - ev.clientX);
+  }
+}
+
+function stopResize(): void {
+  resizeFrom = null;
+  document.body.style.cursor = '';
+  window.removeEventListener('mousemove', onResizeMove);
+  window.removeEventListener('mouseup', stopResize);
+  keepWidth();
+}
+
+function startResize(ev: MouseEvent): void {
+  if (ev.button !== 0) {
+    return;
+  }
+
+  ev.preventDefault();
+  resizeFrom = { x: ev.clientX, width: drawerWidth.value };
+  document.body.style.cursor = 'col-resize';
+  window.addEventListener('mousemove', onResizeMove);
+  window.addEventListener('mouseup', stopResize);
+}
+
+function stepWidth(delta: number): void {
+  drawerWidth.value = clampWidth(drawerWidth.value + delta);
+  keepWidth();
+}
+
+onBeforeUnmount(() => {
+  if (resizeFrom) {
+    stopResize();
+  }
+});
+
+/** The body the tabs switch, for their aria-controls. */
+const PANEL_ID = 'configurable-views-editor-panel';
+
+const tab = ref('add');
+const search = ref('');
+
+const widths = WIDTH_PRESETS;
+const heights = HEIGHT_PRESETS;
+const spacings = SPACING_PRESETS;
+
+// Searched as it reads: the translated name and description.
+const tileText = (entry: CatalogEntry) => `${ t(entry.labelKey) } ${ t(entry.descKey) }`;
+const blocks = computed(() => searchCatalog(BUILDING_BLOCKS, search.value, tileText));
+const readyMade = computed(() => searchCatalog(READY_MADE, search.value, tileText));
+
+const gap = computed(() => (props.view && 'gap' in props.view ? props.view.gap : DEFAULT_GAP));
+const pagePadding = computed(() => (props.view && 'pad' in props.view ? props.view.pad : DEFAULT_PAGE_PADDING));
+
+// "Selected: Clusters (Table)" — the widget's own title, then which building block it is.
+const selectedLabel = computed(() => {
+  const widget = props.selected?.widget;
+
+  if (!widget) {
+    return '';
+  }
+
+  const key = blockLabelKey(widget.kind);
+  const block = key ? t(key) : widget.kind;
+
+  return t('configurableViews.sidebar.selected', { title: widget.title || block, block });
+});
+
+const widthPreset = computed(() => (props.selected ? widthPresetOf(props.selected.colSpan) : null));
+const heightPreset = computed(() => (props.selected ? heightPresetOf(props.selected.height, gap.value) : null));
+const spacingPreset = computed(() => (props.selected ? spacingPresetOf(props.selected.padding) : null));
+
+/** What an input or select holds, from its event. */
+function valueOf(ev: Event): string {
+  return (ev.target as HTMLInputElement).value;
+}
 </script>
 
 <template>
-  <aside class="evs">
+  <aside
+    class="evs"
+    :style="{ width: `${ drawerWidth }px`, flexBasis: `${ drawerWidth }px` }"
+  >
+    <!-- Drag to widen or narrow the drawer; the arrow keys do the same once it has focus -->
+    <div
+      class="evs__resize"
+      role="separator"
+      aria-orientation="vertical"
+      tabindex="0"
+      :aria-label="t('configurableViews.sidebar.resize')"
+      :aria-valuenow="drawerWidth"
+      :aria-valuemin="DRAWER_MIN"
+      data-testid="configurable-views-drawer-resize"
+      @mousedown="startResize"
+      @dblclick="stepWidth(DRAWER_DEFAULT - drawerWidth)"
+      @keydown.left.prevent="stepWidth(DRAWER_STEP)"
+      @keydown.right.prevent="stepWidth(-DRAWER_STEP)"
+    />
     <header class="evs__head">
       <h3 class="evs__title">
-        Edit panel<template v-if="view">
+        {{ t('configurableViews.sidebar.title') }}<template v-if="view">
           &nbsp;-&nbsp; {{ view.name }}
         </template>
       </h3>
       <button
         class="evs__close"
-        title="Close"
-        aria-label="Close the editor"
+        :title="t('generic.close')"
+        :aria-label="t('configurableViews.sidebar.closeEditor')"
         @click="$emit('close')"
       >
         <i class="icon icon-close" />
       </button>
     </header>
 
-    <nav class="evs__tabs">
-      <button
-        v-for="t in [{ id: 'add', label: 'Add' }, { id: 'layout', label: 'Layout' }, { id: 'view', label: 'Panel' }]"
-        :key="t.id"
-        class="evs__tab"
-        :class="{ 'evs__tab--active': tab === t.id }"
-        @click="tab = t.id"
-      >
-        {{ t.label }}
-      </button>
-    </nav>
+    <!-- The product's own tabs, as the Extensions page uses them: the row only, with the body below
+       as their panel so it scrolls under a row that stays put -->
+    <Tabbed
+      class="evs__tabs"
+      :tabs-only="true"
+      :use-hash="false"
+      default-tab="add"
+      :external-panel-id="PANEL_ID"
+      data-testid="configurable-views-editor-tabs"
+      @changed="tab = $event.selectedName"
+    >
+      <Tab
+        v-for="(item, i) in TABS"
+        :key="item.id"
+        :name="item.id"
+        :label-key="item.labelKey"
+        :weight="TABS.length - i"
+      />
+    </Tabbed>
 
     <div
+      :id="PANEL_ID"
+      role="tabpanel"
       class="evs__body"
       :class="{ 'evs__body--layout': tab === 'layout' }"
     >
-      <!-- A stock view is Rancher's own Home with no grid behind it: nothing to add, nothing to
-         lay out. Its View tab still works — it can be named, defaulted and deleted like any other. -->
+      <!-- A stock view is Rancher's own page with no grid behind it: nothing to add, nothing to
+         lay out. Its tab still works — it can be made the default like any other. -->
       <p
         v-if="isStock && tab !== 'view'"
         class="evs__hint"
       >
-        This panel is Rancher's own Home. It has no grid, so there is nothing to add to it or lay
-        out. Rename it in the header, or make a new panel to build one of your own.
+        {{ t('configurableViews.sidebar.stockHint') }}
       </p>
 
       <!-- ---- ADD ---- -->
@@ -185,26 +280,22 @@ export default {
           class="evs__new"
         >
           <h4 class="evs__new-title">
-            <template v-if="startedFrom">
-              New panel, started from {{ startedFrom }}
-            </template>
-            <template v-else>
-              New panel
-            </template>
+            {{ startedFrom ? t('configurableViews.sidebar.newViewFrom', { source: startedFrom }) : t('configurableViews.sidebar.newView') }}
           </h4>
           <p class="evs__hint">
-            Name it in the header. Drag widgets in, or change the starting point:
+            {{ t('configurableViews.sidebar.newHint') }}
           </p>
           <div class="evs__chips">
             <button
               class="evs__chip"
               @click="$emit('start-from', '')"
             >
-              Start empty instead
+              {{ t('configurableViews.sidebar.startEmpty') }}
             </button>
             <button
               v-for="point in startingPoints"
               :key="point.id"
+              v-clean-tooltip="point.label"
               class="evs__chip"
               @click="$emit('start-from', point.id)"
             >
@@ -212,27 +303,26 @@ export default {
             </button>
           </div>
           <p class="evs__hint">
-            Nothing is saved until you press Save. Cancel throws the new panel away.
+            {{ t('configurableViews.sidebar.newFootnote') }}
           </p>
         </section>
 
         <input
           v-model="search"
           class="evs__field"
-          placeholder="Search components"
-          aria-label="Search components"
+          :placeholder="t('configurableViews.sidebar.search')"
+          :aria-label="t('configurableViews.sidebar.search')"
         >
 
         <p class="evs__hint">
-          Drag onto the grid. Building blocks ask what to show once placed; ready-made widgets come
-          with their data set.
+          {{ t('configurableViews.sidebar.dragHint') }}
         </p>
 
         <h4 class="evs__group">
-          Building blocks
+          {{ t('configurableViews.sidebar.blocks') }}
         </h4>
         <p class="evs__hint">
-          Any resource, including your own CRDs.
+          {{ t('configurableViews.sidebar.blocksHint') }}
         </p>
         <div class="evs__tiles">
           <CatalogTile
@@ -247,15 +337,15 @@ export default {
             v-if="!blocks.length"
             class="evs__hint"
           >
-            No building block matches “{{ search }}”.
+            {{ t('configurableViews.sidebar.noBlocks', { query: search }) }}
           </p>
         </div>
 
         <h4 class="evs__group">
-          Ready-made
+          {{ t('configurableViews.sidebar.readyMade') }}
         </h4>
         <p class="evs__hint">
-          Building blocks with their data already set. Save your own from any widget.
+          {{ t('configurableViews.sidebar.readyMadeHint') }}
         </p>
         <div class="evs__tiles">
           <CatalogTile
@@ -270,7 +360,7 @@ export default {
             v-if="!readyMade.length"
             class="evs__hint"
           >
-            No ready-made widget matches “{{ search }}”.
+            {{ t('configurableViews.sidebar.noReadyMade', { query: search }) }}
           </p>
         </div>
       </template>
@@ -281,17 +371,16 @@ export default {
           v-if="selected"
           class="evs__selected"
         >
-          Selected: {{ selectedLabel }}
+          {{ selectedLabel }}
         </p>
         <p class="evs__hint">
-          Click a widget on the grid to lay it out. Width, height and spacing are per widget; the
-          grid gap is the same for the whole panel.
+          {{ t('configurableViews.sidebar.layoutHint') }}
         </p>
 
         <template v-if="selected">
           <div class="evs__control">
             <h4 class="evs__label">
-              Width
+              {{ t('configurableViews.sidebar.width') }}
             </h4>
             <div class="evs__seg">
               <button
@@ -301,14 +390,14 @@ export default {
                 :class="{ 'evs__pill--on': widthPreset === w.id }"
                 @click="$emit('set-width', w.span)"
               >
-                {{ w.label }}
+                {{ t(w.labelKey) }}
               </button>
             </div>
           </div>
 
           <div class="evs__control">
             <h4 class="evs__label">
-              Height
+              {{ t('configurableViews.sidebar.height') }}
             </h4>
             <div class="evs__seg">
               <button
@@ -318,14 +407,14 @@ export default {
                 :class="{ 'evs__pill--on': heightPreset === h.id }"
                 @click="$emit('set-height', h.id)"
               >
-                {{ h.label }}
+                {{ t(h.labelKey) }}
               </button>
             </div>
           </div>
 
           <div class="evs__control">
             <h4 class="evs__label">
-              Spacing
+              {{ t('configurableViews.sidebar.spacing') }}
             </h4>
             <div class="evs__seg">
               <button
@@ -335,109 +424,34 @@ export default {
                 :class="{ 'evs__pill--on': spacingPreset === s.id }"
                 @click="$emit('set-spacing', s.id)"
               >
-                {{ s.label }}
+                {{ t(s.labelKey) }}
               </button>
             </div>
           </div>
-
-          <button
-            class="evs__advanced"
-            :aria-expanded="advancedOpen ? 'true' : 'false'"
-            @click="toggleAdvanced"
-          >
-            <i
-              class="icon"
-              :class="advancedOpen ? 'icon-chevron-down' : 'icon-chevron-right'"
-            />
-            Advanced
-          </button>
-
-          <template v-if="advancedOpen">
-            <p class="evs__hint">
-              Exact values in pixels. Overrides the Spacing preset for this component only.
-            </p>
-
-            <div class="evs__control">
-              <h4 class="evs__label evs__label--margin">
-                Margin
-              </h4>
-              <div class="evs__sides">
-                <label
-                  v-for="side in sides"
-                  :key="`m-${ side }`"
-                >
-                  <input
-                    class="evs__field evs__field--num"
-                    type="number"
-                    :value="selected.margin[side]"
-                    @change="$emit('set-box', 'margin', side, $event.target.value)"
-                  >
-                  <span>{{ sideLabel(side) }}</span>
-                </label>
-              </div>
-            </div>
-
-            <div class="evs__control">
-              <h4 class="evs__label evs__label--padding">
-                Padding
-              </h4>
-              <div class="evs__sides">
-                <label
-                  v-for="side in sides"
-                  :key="`p-${ side }`"
-                >
-                  <input
-                    class="evs__field evs__field--num"
-                    type="number"
-                    :value="selected.padding[side]"
-                    @change="$emit('set-box', 'padding', side, $event.target.value)"
-                  >
-                  <span>{{ sideLabel(side) }}</span>
-                </label>
-              </div>
-            </div>
-
-            <div class="evs__control">
-              <h4 class="evs__label">
-                Column span
-              </h4>
-              <div class="evs__seg">
-                <button
-                  v-for="span in columnSpans"
-                  :key="span"
-                  class="evs__pill evs__pill--narrow"
-                  :class="{ 'evs__pill--on': selected.colSpan === span }"
-                  @click="$emit('set-col-span', span)"
-                >
-                  {{ span }}
-                </button>
-              </div>
-            </div>
-          </template>
         </template>
       </template>
 
       <!-- ---- VIEW ---- -->
       <template v-else>
         <p class="evs__hint">
-          These apply to the whole panel — every widget on it.
+          {{ t('configurableViews.sidebar.viewHint') }}
         </p>
 
         <h4 class="evs__group">
-          Name
+          {{ t('configurableViews.sidebar.name') }}
         </h4>
         <input
           class="evs__field"
           :value="view ? view.name : ''"
-          aria-label="Panel name"
-          @input="$emit('set-name', $event.target.value)"
+          :aria-label="t('configurableViews.bar.viewName')"
+          @input="$emit('set-name', valueOf($event))"
         >
 
         <h4
           v-if="!isStock"
           class="evs__group"
         >
-          Grid gap
+          {{ t('configurableViews.sidebar.gap') }}
         </h4>
         <div
           v-if="!isStock"
@@ -449,17 +463,17 @@ export default {
             min="0"
             max="64"
             :value="gap"
-            aria-label="Grid gap in pixels"
-            @change="$emit('set-gap', $event.target.value)"
+            :aria-label="t('configurableViews.sidebar.gapLabel')"
+            @change="$emit('set-gap', valueOf($event))"
           >
-          <span class="evs__hint">pixels between widgets</span>
+          <span class="evs__hint">{{ t('configurableViews.sidebar.gapHint') }}</span>
         </div>
 
         <h4
           v-if="!isStock"
           class="evs__group"
         >
-          Page padding
+          {{ t('configurableViews.sidebar.pagePadding') }}
         </h4>
         <div
           v-if="!isStock"
@@ -471,33 +485,33 @@ export default {
             min="0"
             max="96"
             :value="pagePadding"
-            aria-label="Page padding in pixels"
-            @change="$emit('set-page-padding', $event.target.value)"
+            :aria-label="t('configurableViews.sidebar.pagePaddingLabel')"
+            @change="$emit('set-page-padding', valueOf($event))"
           >
-          <span class="evs__hint">pixels around the whole grid</span>
+          <span class="evs__hint">{{ t('configurableViews.sidebar.pagePaddingHint') }}</span>
         </div>
 
         <h4 class="evs__group">
-          This panel
+          {{ t('configurableViews.sidebar.thisView') }}
         </h4>
         <button
           class="btn btn-sm role-secondary evs__wide"
           :disabled="isDefault"
           @click="$emit('set-default')"
         >
-          {{ isDefault ? 'This is my default panel' : 'Set as my default' }}
+          {{ isDefault ? t('configurableViews.sidebar.isDefault') : t('configurableViews.sidebar.setDefault') }}
         </button>
         <button
           class="btn btn-sm role-secondary evs__wide"
           @click="$emit('publish')"
         >
-          Publish as organization template
+          {{ t('configurableViews.sidebar.publish') }}
         </button>
         <button
           class="btn btn-sm role-link evs__wide evs__danger"
           @click="$emit('delete')"
         >
-          Delete panel
+          {{ t('configurableViews.sidebar.delete') }}
         </button>
       </template>
     </div>
@@ -505,24 +519,40 @@ export default {
 </template>
 
 <style lang="scss" scoped>
-// 380px wide, its own scroll — the grid beside it keeps the width it will really have. It starts
-// below the view bar, which spans the whole page above both of them.
+// 380px wide until dragged wider, its own scroll — the grid beside it keeps the width it will really
+// have. It starts below the view bar, which spans the whole page above both of them.
 .evs {
   background:     var(--body-bg);
   border-left:    1px solid var(--border);
   box-sizing:     border-box;
   display:        flex;
-  flex:           0 0 380px;
+  flex:           0 0 auto;
   flex-direction: column;
   // Below the view bar, which is sticky at 0 and spans the page above both of us. At top:0 this
   // rode up over the bar the moment the page scrolled.
   height:         calc(100vh - var(--header-height, 54px) - 57px);
   position:       sticky;
   top:            57px;
-  width:          380px;
   // Above the view bar, below the app header's stacking context (see the note at the foot of this
   // file) — the drawer is page chrome and must never cover the header's menus.
   z-index:        9;
+
+  // The drag handle along the left edge: a few pixels either side of the hairline, lit on hover
+  &__resize {
+    bottom:   0;
+    cursor:   col-resize;
+    left:     -4px;
+    position: absolute;
+    top:      0;
+    width:    8px;
+    z-index:  1;
+
+    &:hover,
+    &:focus-visible {
+      background: linear-gradient(90deg, transparent 3px, var(--primary) 3px, var(--primary) 5px, transparent 5px);
+      outline:    none;
+    }
+  }
 
   &__head {
     align-items:     center;
@@ -559,35 +589,11 @@ export default {
   }
 
   // A 25px strip: 12px labels, 16px apart, the active one underlined ON the strip's own hairline.
+  // The shell's Tabbed, in its tabs-only form. Its bottom margin is for a page; here the body
+  // follows straight on.
   &__tabs {
-    border-bottom: 1px solid var(--border);
-    box-sizing:    border-box;
-    display:       flex;
     flex:          0 0 auto;
-    gap:           16px;
-    height:        25px;
-    padding:       0 16px;
-  }
-
-  // The active tab's underline sits ON the row's own hairline, not under it — otherwise the two
-  // draw as separate lines a few pixels apart. The active tab darkens rather than bolding: the
-  // underline already carries the state, and reflowing the label on every click does not.
-  &__tab {
-    background:    transparent;
-    border:        none;
-    border-bottom: 2px solid transparent;
-    color:         var(--link);
-    cursor:        pointer;
-    font-size:     12px;
-    line-height:   17px;
-    margin-bottom: -1px;
-    min-height:    0;
-    padding:       0 0 5px;
-
-    &--active {
-      border-bottom-color: var(--primary);
-      color:               var(--primary);
-    }
+    margin-bottom: 0;
   }
 
   &__body {
@@ -632,33 +638,10 @@ export default {
     font-weight:   700;
     line-height:   14px;
     margin:        0 0 6px;
-
-    // Colour-keyed to the bands drawn on the canvas: amber = margin, teal = padding.
-    &--margin,
-    &--padding {
-      align-items: center;
-      display:     flex;
-      gap:         6px;
-
-      &::before {
-        border-radius: 2px;
-        content:       '';
-        height:        9px;
-        width:         9px;
-      }
-    }
-
-    &--margin::before {
-      background: rgba(247, 181, 0, 0.9);
-    }
-
-    &--padding::before {
-      background: rgba(0, 170, 90, 0.9);
-    }
   }
 
   &__selected {
-    background:    var(--accent-btn);
+    background:    color-mix(in srgb, var(--primary) 12%, transparent);
     border-radius: 4px;
     font-size:     14px;
     line-height:   18px;
@@ -724,58 +707,12 @@ export default {
     white-space:   nowrap;
 
     &:hover:not(&--on) {
-      background: var(--accent-btn);
+      background: color-mix(in srgb, var(--primary) 12%, transparent);
     }
 
     &--on {
       background: var(--primary);
       color:      var(--primary-text);
-    }
-
-    &--narrow {
-      min-width: 24px;
-    }
-  }
-
-  // Advanced opens a further set of controls, so it is separated by a rule and titled like the
-  // Add tab's section headings.
-  &__advanced {
-    align-items:  center;
-    background:   transparent;
-    border:       none;
-    border-top:   1px solid var(--border);
-    color:        var(--body-text);
-    cursor:       pointer;
-    display:      flex;
-    font-size:    13px;
-    font-weight:  700;
-    gap:          8px;
-    line-height:  16px;
-    min-height:   0;
-    padding:      12px 0 0;
-    width:        100%;
-
-    i {
-      font-size: 16px;
-    }
-  }
-
-  &__sides {
-    display:               grid;
-    gap:                   8px;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-
-    label {
-      display:        flex;
-      flex-direction: column;
-      gap:            3px;
-    }
-
-    span {
-      color:       var(--muted);
-      font-size:   12px;
-      line-height: 12px;
-      text-align:  center;
     }
   }
 
@@ -832,7 +769,12 @@ export default {
     height:        24px;
     line-height:   14px;
     min-height:    24px;
+    // A long view name is cut short rather than running out of the drawer; the tooltip has it whole
+    max-width:     200px;
+    overflow:      hidden;
     padding:       4px 10px;
+    text-overflow: ellipsis;
+    white-space:   nowrap;
 
     &:hover {
       border-color: var(--primary);

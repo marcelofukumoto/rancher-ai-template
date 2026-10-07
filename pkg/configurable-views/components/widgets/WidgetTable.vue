@@ -1,338 +1,207 @@
-<script>
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue';
+import { useStore } from 'vuex';
+import { CAPI, MANAGEMENT } from '@shell/config/types';
+import { useI18n } from '@shell/composables/useI18n';
 import PaginatedResourceTable from '@shell/components/PaginatedResourceTable.vue';
 import ResourceTable from '@shell/components/ResourceTable.vue';
-import { STATE, NAME, NAMESPACE, AGE } from '@shell/config/table-headers';
 import WidgetCard from './WidgetCard.vue';
-import {
-  applyFilter, applySort, fieldValue, fieldLabel, storeForType, typeColumns, withoutDetailLink,
-  fetchClusterPage
-} from '../../templating/widget-data';
-import { isDownstream } from '../../templating/widget-catalog';
+import { fetchClusterSchemas, storeForType } from '../../templating/widget-data';
+import { PAGINATION_CONTEXT } from '../../templating/widget-catalog';
+import type { TypeSchema } from '../../templating/resource-types';
+import { useWidgetCluster, NO_CLUSTER } from '../../composables/useWidgetCluster';
+import { useClusterPage } from '../../composables/useClusterPage';
+import { useSharedTypeList } from '../../composables/useSharedTypeList';
+import type { TableColumn } from '@shell/types/store/type-map';
+import type { WidgetSpec } from '../../templating/types';
 
-// TABLE — "Rows of a resource with the columns you pick".
+// TABLE — "Rows of a resource".
 //
-// Rendered by Rancher's PaginatedResourceTable, which is the component built for exactly this:
-// "ResourceList like capabilities outside of List pages", its own words — the resource fetch,
-// SERVER-SIDE pagination where the backend supports it, and the plumbing that goes with them. So
-// this widget does not fetch at all; it says what to show and hands the rest over.
+// The widget says WHAT the table shows: the resource, and where it is read from - Rancher's own API,
+// or one cluster's (`fromCluster`). HOW it shows it is the table views': the toolbar every resource list has, with its
+// filter query, columns, grouping, sort and export, and, when the widget asks (`viewTabs`), the
+// saved-view tabs. The saved views are the type's own, shared with every list of it, unless the
+// widget keeps its own (`ownViews`), which live under the type by the widget's id.
 //
-// That is why the widget's own Where/Filter/Sort arrive as `localFilter`: the table owns the rows,
-// and a filter is something applied to them on the way past, not a reason to fetch them ourselves.
+// From RANCHER, it is rendered by Rancher's PaginatedResourceTable - the fetch, server-side paging
+// where the shell pages the type (see PAGINATION_CONTEXT), and the plumbing that goes with them. From a
+// CLUSTER, it is read from that cluster's own API instead (see useClusterPage), whole, for the table to
+// page, sort and filter itself.
 //
-// It is KEYED on the resource. The table fetches for the schema it was built with and does not
-// re-fetch when that prop changes, so pointing a widget at a different type left the old type's
-// rows on screen until a reload. Keying it makes a new resource a new table. The sort is in the key
-// for the same reason: a column's default sort is read once, when the table is built.
-//
-// Columns come from the RESOURCE first: Rancher defines real headers per type, so a User gets a
-// username and a last login while a Cluster gets a provider and a Kubernetes version, each with its
-// proper formatter and sort. Only where the type declares nothing does this fall back to a generic
-// header, and then to a value column on this extension's own field readers — which is what keeps an
-// arbitrary CRD field working.
-//
-// Rancher's NAME column links into the resource's detail page, which needs a cluster context the
-// Home does not have; the link silently renders nothing. The stock Home's own cluster table drops
-// the same formatter for the same reason (see withoutDetailLink for the type's own headers).
-const { formatter, ...NAME_NO_LINK } = NAME;
+// It is KEYED on what it asks for (see tableKey): the table fetches for the schema it was built with
+// and reads its saved views once, when it is built, so a new question is a new table.
 
-const GENERIC_HEADERS = {
-  state:     STATE,
-  name:      NAME_NO_LINK,
-  namespace: NAMESPACE,
-  created:   AGE,
-};
+const props = withDefaults(defineProps<{ widget: WidgetSpec; nodeId?: string }>(), { nodeId: '' });
 
-export default {
-  name:       'WidgetTable',
-  components: {
-    PaginatedResourceTable, ResourceTable, WidgetCard
-  },
+const store = useStore();
+const { t } = useI18n(store);
+const { cluster } = useWidgetCluster(() => props.widget);
 
-  props: {
-    widget: {
-      type:     Object,
-      required: true,
-    },
-  },
+/** Rows per page: a widget is a glance at a list, not the list. */
+const PER_PAGE = 10;
 
-  data() {
-    return {
-      rows:        [],
-      pageCount:   0,
-      truncated:   false,
-      serverPaged: false,
-      loadingPage: false,
-      pageError:   '',
-      page:        1,
-      // The last request actually made, so the same one is not made three times over (see loadPage).
-      lastKey:     '',
-    };
-  },
+// Read from a cluster's own API rather than Rancher's: a different fetch, and a different table.
+const downstream = computed(() => !!props.widget.fromCluster);
 
-  computed: {
-    // A Kubernetes type lives once PER CLUSTER, so it is read from a named cluster rather than from
-    // the global API. That is a different fetch, a different table, and a question the settings
-    // panel has to have asked.
-    downstream() {
-      return isDownstream(this.widget.resource);
-    },
+/**
+ * The type the table lists. Rancher's own list of provisioning clusters lists their MANAGEMENT
+ * clusters - its rows and columns (provider, version, machines) are the management cluster's - so a
+ * table of provisioning clusters read from Rancher does the same. Read whole, a provisioning cluster
+ * has only its CRD's columns: its id for a name, and no provider, version or machines.
+ */
+const listed = computed(() => (!downstream.value && props.widget.resource === CAPI.RANCHER_CLUSTER ? MANAGEMENT.CLUSTER : props.widget.resource));
 
-    cluster() {
-      return this.widget.cluster || '';
-    },
+const inStore = computed(() => storeForType(store.getters, listed.value));
 
-    // A filter is applied here rather than by the API, so it changes HOW the rows are fetched.
-    filtered() {
-      return !!this.widget.filter || (this.widget.where === 'custom' && !!this.widget.targets?.length);
-    },
+const storeSchema = computed(() => (listed.value ? store.getters[`${ inStore.value }/schemaFor`](listed.value) : null));
 
-    /**
-     * Everything the request depends on, except which page. When this changes the widget is asking
-     * a different question, so the answer starts again at page one.
-     */
-    queryKey() {
-      return JSON.stringify([this.widget.resource, this.cluster, this.widget.sortBy, this.widget.sortDir, this.filtered]);
-    },
+/**
+ * The schema of a type only the widget's cluster has - a CRD the local cluster does not - which no
+ * store holds, so it is read from that cluster. Its columns are then the ones the CRD declares.
+ */
+const clusterSchema = ref<TypeSchema | null>(null);
 
-    inStore() {
-      return storeForType(this.$store.getters, this.widget.resource);
-    },
+watch(() => [downstream.value && !storeSchema.value ? props.widget.resource : '', downstream.value ? cluster.value : ''], async([resource, from]) => {
+  clusterSchema.value = null;
 
-    schema() {
-      return this.widget.resource ? this.$store.getters[`${ this.inStore }/schemaFor`](this.widget.resource) : null;
-    },
+  if (!resource || !from) {
+    return;
+  }
 
-    // What the type itself declares, keyed by column id.
-    typeHeaders() {
-      return Object.fromEntries(typeColumns(this.$store.getters, this.widget.resource).map((c) => [c.id, c.header]));
-    },
+  const schemas = await fetchClusterSchemas(store, from).catch(() => []);
 
-    // Nothing chosen means EVERYTHING the type has — the same columns its own list page shows.
-    // Starting from all of them and unticking is less work than hunting for the ones you want.
-    defaultColumns() {
-      const own = Object.keys(this.typeHeaders);
+  clusterSchema.value = schemas.find((s) => s.id === resource) || null;
+}, { immediate: true });
 
-      return own.length ? own : ['state', 'name'];
-    },
+const schema = computed(() => storeSchema.value || clusterSchema.value);
 
-    headers() {
-      const ids = this.widget.columns?.length ? this.widget.columns : this.defaultColumns;
+/**
+ * A type's header, minus the link into the resource's detail page.
+ *
+ * That link goes to the cluster in the page's URL, which is not the widget's: the Home has none, and
+ * a cluster's dashboard can hold a widget showing another cluster. So it would break or lead to the
+ * wrong cluster - the stock Home's own cluster table drops it for the same reason.
+ */
+function withoutDetailLink(header: TableColumn): TableColumn {
+  if (header?.formatter !== 'LinkDetail') {
+    return header;
+  }
 
-      return ids.map((id) => {
-        const header = this.headerFor(id);
+  const { formatter, ...rest } = header;
 
-        // Sorting goes through the COLUMN wherever the column can do it: the header knows which
-        // path it really sorts on, which a field reader never taught this type cannot. Marking the
-        // header is how SortableTable is told to open that way — it has no prop for the direction.
-        if (id === this.widget.sortBy && header.sort) {
-          return {
-            ...header, defaultSort: true, defaultSortDescending: this.widget.sortDir === 'desc'
-          };
-        }
+  return rest;
+}
 
-        return header;
-      });
-    },
+// The type's own columns, as its list page has them - and, for a list the server pages, the ones the
+// server can sort and filter by.
+const headersFor = (paged: boolean): TableColumn[] => (schema.value ? (store.getters['type-map/headersFor'](schema.value, paged) || []).map(withoutDetailLink) : []);
+const headers = computed(() => headersFor(false));
+const pagedHeaders = computed(() => headersFor(true));
 
-    // True when the table is sorting for us, and this widget must not sort on top of it.
-    sortsItself() {
-      return this.headers.some((h) => h.defaultSort);
-    },
+// The table views' saved-view tabs, and whose saved views they are: the type's, or this widget's.
+const viewTabs = computed(() => !!props.widget.viewTabs);
+const tableViewsPage = computed(() => (props.widget.ownViews && props.nodeId ? `widget-${ props.nodeId }` : null));
 
-    // The table pages for us, so the spec's limit is a page size rather than a hard cut.
-    perPage() {
-      return this.widget.limit || 10;
-    },
+// Rebuilt, too, when another table of the same global type leaves the page (see useSharedTypeList).
+const shared = useSharedTypeList(() => (!downstream.value && listed.value ? `${ inStore.value }/${ listed.value }` : null));
 
-    /**
-     * The rows the downstream table draws.
-     *
-     * `local-filter` belongs to the resource-fetch MIXIN, not to ResourceTable — passing it to a
-     * bare table does nothing at all. The filter is applied here instead, which is also why a
-     * filtered widget is fetched whole (see fetchClusterPage): you cannot filter rows you never
-     * asked for.
-     */
-    visibleRows() {
-      return this.filterRows(this.rows);
-    },
+const tableKey = computed(() => JSON.stringify([listed.value, downstream.value, !!schema.value, viewTabs.value, tableViewsPage.value, shared.value]));
 
-    // External pagination means "the rows you were handed ARE the page" — the table shows them all
-    // and trusts the count. That is true of a single cluster, where the backend sliced the page, and
-    // false of a merge, where we hold every row: there the table must do its own paging or it draws
-    // all 144 of them under a footer claiming 11-20.
-    externalResult() {
-      return { count: this.pageCount };
-    },
+// ---- a per-cluster type -----------------------------------------------------------------------------
 
-    downstreamMessage() {
-      if (!this.cluster) {
-        return 'Choose a cluster in this widget\u2019s settings — a Kubernetes type lives once per cluster.';
-      }
+const {
+  rows, loading: loadingRows, error: rowsError, truncated
+} = useClusterPage(() => ({
+  resource: props.widget.resource,
+  // A global type is not read here at all - its table fetches for itself.
+  cluster:  downstream.value ? cluster.value : '',
+  perPage:  PER_PAGE,
+  whole:    true,
+}));
 
-      return this.pageError;
-    },
-  },
+/**
+ * The count beside the title, as a list's heading shows it: how many rows there are.
+ *
+ * From a named cluster, how many were read. For a global type, the total the store kept with the page
+ * it last asked for, or, when it holds every row, how many it holds.
+ */
+const count = computed<number | null>(() => {
+  if (downstream.value) {
+    return rows.value.length;
+  }
 
-  watch: {
-    queryKey() {
-      this.page = 1;
-      this.loadPage();
-    },
-  },
+  if (!schema.value) {
+    return null;
+  }
 
-  created() {
-    if (this.downstream) {
-      this.loadPage();
-    }
-  },
+  const page = store.getters[`${ inStore.value }/havePage`]?.(listed.value);
 
-  methods: {
-    /**
-     * Fetch the page the widget should be showing.
-     *
-     * THREE different things ask for it whenever a widget appears or is changed, and each is right
-     * to: the component's own created hook, the watcher on what the widget asks for, and
-     * SortableTable, which emits `pagination-changed` when it mounts. Three requests for the same
-     * rows — the table would fill, blank and fill again. So the request is keyed by everything it
-     * depends on and an identical one is simply not repeated; a failed one clears the key, because
-     * the next ask should be a real retry rather than a silent no-op.
-     */
-    async loadPage(pagination) {
-      if (!this.downstream) {
-        return;
-      }
+  if (typeof page?.result?.count === 'number') {
+    return page.result.count;
+  }
 
-      const page = pagination?.page || this.page;
-      const pageSize = pagination?.perPage || this.perPage;
-      const key = `${ this.queryKey }|${ page }|${ pageSize }`;
+  return (store.getters[`${ inStore.value }/all`]?.(listed.value) || []).length;
+});
 
-      if (key === this.lastKey) {
-        return;
-      }
-
-      this.lastKey = key;
-      this.page = page;
-      this.loadingPage = true;
-      this.pageError = '';
-
-      try {
-        const res = await fetchClusterPage(this.$store, {
-          resource: this.widget.resource,
-          cluster:  this.cluster,
-          page,
-          pageSize,
-          sortBy:   this.widget.sortBy,
-          sortDir:  this.widget.sortDir,
-          filtered: this.filtered,
-        });
-
-        this.rows = res.rows;
-        this.pageCount = res.count;
-        this.truncated = res.truncated;
-        this.serverPaged = res.serverPaged;
-      } catch (e) {
-        this.rows = [];
-        this.pageCount = 0;
-        this.lastKey = '';
-        this.pageError = e?.message || `Could not read ${ this.widget.resource } from that cluster.`;
-      } finally {
-        this.loadingPage = false;
-      }
-    },
-
-    headerFor(id) {
-      const own = this.typeHeaders[id];
-
-      if (own) {
-        return withoutDetailLink(own);
-      }
-
-      return GENERIC_HEADERS[id] || {
-        name:   id,
-        label:  fieldLabel(id),
-        value:  (row) => this.cell(row, id),
-        sort:   false,
-        search: false,
-      };
-    },
-
-    cell(row, id) {
-      const value = fieldValue(row, id);
-
-      return value === '' || value === null || value === undefined ? '—' : value;
-    },
-
-    // Applied to whichever rows the table has, however it got them.
-    filterRows(rows) {
-      const scoped = this.widget.where === 'custom' && this.widget.targets?.length ? (rows || []).filter((row) => this.inTargets(row)) : rows;
-      const filtered = applyFilter(scoped, this.widget.filter);
-
-      return this.sortsItself ? filtered : applySort(filtered, this.widget.sortBy, this.widget.sortDir);
-    },
-
-    inTargets(row) {
-      const targets = this.widget.targets.map((t) => t.toLowerCase());
-      const candidates = [fieldValue(row, 'namespace'), row.clusterName, row.spec?.clusterName].filter(Boolean);
-
-      return candidates.some((c) => targets.includes(`${ c }`.toLowerCase()));
-    },
-  },
-};
+const downstreamMessage = computed(() => (cluster.value ? rowsError.value : t(NO_CLUSTER)));
 </script>
 
 <template>
-  <!-- A type read from a named cluster: we fetch the page ourselves, because the cluster is not
-     something PaginatedResourceTable can be told about. -->
   <WidgetCard
     v-if="downstream"
     :title="widget.title"
-    :loading="loadingPage && !rows.length"
+    :count="widget.title ? count : null"
+    :loading="loadingRows && !rows.length"
     :error="downstreamMessage"
   >
+    <!-- A type read from a named cluster: we fetch its rows ourselves, because the cluster is not
+       something PaginatedResourceTable can be told about. -->
     <ResourceTable
+      :key="tableKey"
       :schema="schema"
-      :rows="visibleRows"
+      :rows="rows"
       :headers="headers"
-      :loading="loadingPage"
-      :external-pagination-enabled="serverPaged"
-      :external-pagination-result="externalResult"
+      :loading="loadingRows"
+      :table-views="true"
+      :table-view-tabs="viewTabs"
+      :table-views-page="tableViewsPage"
       :table-actions="false"
       :row-actions="false"
       :namespaced="false"
-      :groupable="false"
       :search="false"
-      :rows-per-page="perPage"
+      :rows-per-page="PER_PAGE"
       key-field="id"
-      @pagination-changed="loadPage"
     />
     <p
       v-if="truncated"
       class="wtable__note"
     >
-      This cluster has more rows than a filtered widget reads at once, so the filter was applied to
-      the first of them. Narrow the filter, or drop it to page through all of them.
+      {{ t('configurableViews.widget.tableTruncated') }}
     </p>
   </WidgetCard>
 
   <WidgetCard
     v-else
     :title="widget.title"
-    :error="schema ? '' : `Rancher has no &quot;${ widget.resource }&quot; here — the type may not be installed, or you may not have permission to see it.`"
+    :count="widget.title && schema ? count : null"
+    :error="schema ? '' : t('configurableViews.widget.noType', { type: widget.resource })"
   >
     <PaginatedResourceTable
       v-if="schema"
-      :key="`${ widget.resource }|${ widget.sortBy }|${ widget.sortDir }`"
+      :key="tableKey"
       :schema="schema"
       :headers="headers"
-      :pagination-headers="headers"
+      :pagination-headers="pagedHeaders"
+      :context="PAGINATION_CONTEXT"
       :override-in-store="inStore"
-      :local-filter="filterRows"
+      :table-views="true"
+      :table-view-tabs="viewTabs"
+      :table-views-page="tableViewsPage"
       :table-actions="false"
       :row-actions="false"
       :namespaced="false"
-      :groupable="false"
       :search="false"
-      :rows-per-page="perPage"
+      :rows-per-page="PER_PAGE"
       key-field="id"
     />
   </WidgetCard>

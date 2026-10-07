@@ -1,39 +1,31 @@
-<script>
-// The box every widget sits in: a bordered card with a title, an optional count beside it, and the
-// widget's own content below. One component so a Table, a Bar chart and a Text note all read as the
-// same kind of thing on the grid.
-export default {
-  name: 'WidgetCard',
+<script setup lang="ts">
+// The box a widget sits in: a bordered card with a title, an optional count beside it, and the
+// widget's own content below - so a Table reads as the same kind of thing as the widgets around it.
+// The cluster widgets draw the dashboard's own boxes instead, and use this one only to say what they
+// are missing.
+import { useStore } from 'vuex';
+import { useI18n } from '@shell/composables/useI18n';
 
-  props: {
-    title: {
-      type:    String,
-      default: '',
-    },
-    // Shown as a small pill beside the title (the "42" next to Clusters). null hides it.
-    count: {
-      type:    [Number, String],
-      default: null,
-    },
-    loading: {
-      type:    Boolean,
-      default: false,
-    },
-    error: {
-      type:    String,
-      default: '',
-    },
-    // An empty widget says so rather than drawing a blank card.
-    empty: {
-      type:    Boolean,
-      default: false,
-    },
-    emptyText: {
-      type:    String,
-      default: 'Nothing to show.',
-    },
-  },
-};
+withDefaults(defineProps<{
+  title?: string;
+  /** A small pill beside the title (the "42" next to Clusters). null hides it. */
+  count?: number | string | null;
+  loading?: boolean;
+  error?: string;
+  /** An empty widget says so rather than drawing a blank card. */
+  empty?: boolean;
+  emptyText?: string;
+}>(), {
+  title:     '',
+  count:     null,
+  loading:   false,
+  error:     '',
+  empty:     false,
+  emptyText: '',
+});
+
+const store = useStore();
+const { t } = useI18n(store);
 </script>
 
 <template>
@@ -60,15 +52,14 @@ export default {
       </p>
       <p
         v-else-if="loading"
+        v-clean-html="t('generic.loading', {}, true)"
         class="wcard__msg"
-      >
-        Loading…
-      </p>
+      />
       <p
         v-else-if="empty"
         class="wcard__msg"
       >
-        {{ emptyText }}
+        {{ emptyText || t('configurableViews.widget.nothingToShow') }}
       </p>
       <slot v-else />
     </div>
@@ -118,6 +109,10 @@ export default {
   }
 
   &__body {
+    // Clips painting as well as layout: the "Ask Liz" extension lays a `position: fixed` copy over
+    // each state badge, which `overflow` alone does not clip, so the copies of rows scrolled out of
+    // the card were drawn below it.
+    clip-path:  inset(0);
     flex:       1 1 auto;
     font-size:  14px;
     min-height: 0;
